@@ -109,8 +109,9 @@ with st.sidebar:
         except:
             st.error("APIキーエラー")
 
-    home_dir = os.path.expanduser("~")
-    pdf_folder_path = st.text_input("資料パス", value=os.path.join(home_dir, "Desktop", "Critical_Care_Docs"))
+# ★★★ ここがクラウド対応修正箇所 ★★★
+    # Macのパスではなく「フォルダ名」だけにする
+    pdf_folder_path = st.text_input("資料フォルダ名", value="Critical_Care_Docs")
     
     # 状態表示
     if 'knowledge_chunks' in st.session_state:
