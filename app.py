@@ -65,7 +65,14 @@ current_patient_id = None
 
 with st.sidebar:
     st.title("⚙️ System Config")
-    api_key = st.text_input("Gemini API Key", type="password")
+    
+    # 1. SecretsからAPIキーを自動読み込み
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        st.success("🔑 API Key Loaded!")  # 読み込み成功マーク
+    except:
+        # 万が一設定し忘れた時用（またはローカル用）の手動入力
+        api_key = st.text_input("Gemini API Key", type="password")
     
     selected_model_name = "gemini-1.5-pro"
     if api_key:
