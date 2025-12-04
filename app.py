@@ -1,81 +1,95 @@
 import streamlit as st
 import google.generativeai as genai
 import os
+import pandas as pd
+import re
+from datetime import datetime
 from pypdf import PdfReader
-from PIL import Image
 
 # ==========================================
-# 0. アプリ設定
+# 0. アプリ設定 & スタイル
 # ==========================================
-APP_TITLE = "Super Critical Care Support (Final)"
-COMPANY_NAME = "k's tech works. (K&G solution)"
+COMPANY_NAME = "K's tech works. (K&G solution)"
+APP_TITLE = "Super Critical Care Support System"
 
-st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🫁")
+st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🏥")
 
+# フッターとスタイルの定義
 st.markdown(f"""
     <style>
-    .footer {{ position: fixed; left: 0; bottom: 0; width: 100%; background-color: #262730; color: #fafafa; text-align: center; padding: 10px; font-weight: bold; border-top: 1px solid #444; z-index: 100; }}
+    .footer {{
+        position: fixed; left: 0; bottom: 0; width: 100%;
+        background-color: #0E1117; color: #FAFAFA;
+        text-align: center; padding: 10px; font-weight: bold;
+        border-top: 1px solid #444; z-index: 100; font-family: sans-serif;
+    }}
     .block-container {{ padding-bottom: 80px; }}
     </style>
-    <div class="footer">Powered by {COMPANY_NAME}</div>
+    <div class="footer">Produced by {COMPANY_NAME}</div>
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 脳みそ (System Instructions)
+# 1. 草野次長の脳 (System Instruction)
 # ==========================================
 KUSANO_BRAIN = """
-あなたは、**市立長浜病院・臨床工学技術科**の次長であり、30年の臨床経験を持つ「総合集中治療専門医・草野（Kusano）」です。
-提供された【生理学計算データ】と【参照資料】を統合し、ユーザーに対し**コテコテの関西弁**で、論理的かつ厳しく指導を行ってください。
+あなたは、市立長浜病院・臨床工学技術科の次長であり、30年の臨床経験を持つ「草野（Kusano）」です。
+これまでは厳しい指導を行ってきましたが、今回は**「極めて紳士的かつ論理的な臨床のプロフェッショナル」**として振る舞ってください。
 
-【診断のGlobal Standard：ベルリン定義の遵守】
-- **A-aDO2開大時の鉄則:**
-  - 即座にARDSと決めつけるな！世界標準（Berlin Definition）では**「心不全や輸液過剰によるものではないこと」**の証明が必須や。
-  - **次の手:** 「心エコーでEFと弁の評価」「BNP測定」「肺エコー」を指示せよ。
-  - 心機能が正常で、かつ肺水腫がある場合のみ「ARDS」と診断して肺保護換気へ進め。心不全なら利尿と除水が先や！
+あなたの役割は、提供された【生理学データ】と、RAG/Web検索による【参照資料】に基づき、客観的なアセスメントを行うことです。
 
-【酸素の経済学】
-- **DO2 < VO2 = 死**。O2ER > 50% はショック。
+【行動指針】
+1. **情報の優先順位**:
+   - **最優先**: 提供された【参照資料（PDF）】。院内の規定や手持ちの文献を「正」とします。
+   - **次点**: 資料に記載がない場合、**Google検索機能を使用して**、信頼できる医学的ソース（ガイドライン、論文要旨）を検索し、その情報を補完してください。
 
-【循環の鉄則】
-- **脈圧 < 30 mmHg:** SV低下。IVCを見て脱水かポンプ失調か見極めろ。
+2. **多角的視点によるクロスチェック**:
+   - 単一の数値だけでなく、パラメータ間の相互作用（矛盾）を必ず評価してください。
+   - **重要**: 「Hb低値時のO2ER正常（見かけ上の正常）」や「pH正常時のPaCO2/HCO3異常（代償機転）」は見逃さないこと。
 
-【回答スタイル】
-- 一人称は「俺」または「ワシ」。
-- 常に「なぜそうなるか（生理学的根拠）」を説明せえ。
+3. **回答フォーマット**:
+   - **総合評価**: 正常 / 注意 / 危険 （一言で）
+   - **詳細分析**: パラメータごとの評価と、その根拠（出典）。
+   - **臨床工学的アドバイス**: 現状から推奨されるアクション。
+
+4. **ハルシネーション防止**:
+   - PDFに基づく情報か、Google検索に基づく情報か、出典を明確に区別して答えてください。
 """
 
 # ==========================================
-# 2. RAGエンジン (知識検索・強化版)
+# 2. 関数群 (RAG & DB)
 # ==========================================
+# 患者データベースの初期化
+if 'patient_db' not in st.session_state:
+    st.session_state['patient_db'] = {}
+
 @st.cache_resource(show_spinner=False)
 def load_and_chunk_pdfs(folder_path):
     if not os.path.exists(folder_path): return []
     files = [f for f in os.listdir(folder_path) if f.endswith('.pdf')]
     if not files: return []
     chunks = []
-    progress_text = st.empty()
-    bar = st.progress(0)
+    
+    status_bar = st.progress(0)
     for i, file in enumerate(files):
-        progress_text.text(f"📚 知識インストール中... ({i+1}/{len(files)}): {file}")
         try:
             reader = PdfReader(os.path.join(folder_path, file))
             text = ""
             for page in reader.pages:
                 extracted = page.extract_text()
                 if extracted: text += extracted
-            chunk_size = 2000
+            
+            chunk_size = 3000
             for j in range(0, len(text), chunk_size):
                 chunk_text = text[j:j+chunk_size]
-                if len(chunk_text) > 100: chunks.append({"source": file, "content": chunk_text})
+                if len(chunk_text) > 100:
+                    chunks.append({"source": file, "content": chunk_text})
         except: pass
-        bar.progress((i + 1) / len(files))
-    progress_text.empty()
-    bar.empty()
+        status_bar.progress((i + 1) / len(files))
+    status_bar.empty()
     return chunks
 
-def search_relevant_chunks(query, chunks, top_k=3):
+def search_relevant_chunks(query, chunks, top_k=5):
     if not chunks: return []
-    # 検索精度向上のため、キーワードをスペースで分割してスコアリング
     keywords = query.replace("　", " ").split()
     scored_chunks = []
     for chunk in chunks:
@@ -87,174 +101,251 @@ def search_relevant_chunks(query, chunks, top_k=3):
     return [item[1] for item in scored_chunks[:top_k]]
 
 # ==========================================
-# 3. UI構築
+# 3. サイドバー設定 (セキュリティ強化版)
 # ==========================================
+current_patient_id = None # グローバル変数として初期化
+
 with st.sidebar:
-    st.title("⚙️ 設定・資料")
-    api_key = st.text_input("Gemini APIキー", type="password")
+    st.title("⚙️ System Config")
+    api_key = st.text_input("Gemini API Key", type="password")
     
-    # リスト取得・選択
-    selected_model_name = None
+    # モデル選択 (Pro推奨)
+    selected_model_name = "gemini-1.5-pro"
     if api_key:
         genai.configure(api_key=api_key)
         try:
             models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            st.success(f"✅ {len(models)}個のモデルを検出")
-            
-            # 安定版を優先選択
-            default_ix = 0
-            for i, m in enumerate(models):
-                if "gemini-1.5-flash" in m and "latest" in m: default_ix = i; break
-            selected_model_name = st.selectbox("使用するAIモデルを選択", models, index=default_ix)
-        except:
-            st.error("APIキーエラー")
+            pro_models = [m for m in models if '1.5-pro' in m]
+            if pro_models:
+                selected_model_name = st.selectbox("AI Model", models, index=models.index(pro_models[0]))
+            else:
+                selected_model_name = st.selectbox("AI Model", models)
+        except: pass
 
-# ★★★ ここがクラウド対応修正箇所 ★★★
-    # Macのパスではなく「フォルダ名」だけにする
-    pdf_folder_path = st.text_input("資料フォルダ名", value="Critical_Care_Docs")
+    st.markdown("---")
     
-    # 状態表示
-    if 'knowledge_chunks' in st.session_state:
-        st.success(f"📚 脳内知識: {len(st.session_state['knowledge_chunks'])} ブロック")
-    else:
-        st.warning("⚠️ まだ資料を読んでへんで！")
-
-    if st.button("📚 知識ベース構築 (必須)"):
-        if not api_key: st.error("APIキーを入れて！")
+    # --- 患者ID (セキュリティ検証) ---
+    patient_id_input = st.text_input(
+        "🆔 患者ID (半角英数のみ)", 
+        value="TEST1", 
+        max_chars=10,
+        help="個人情報保護のため、日本語（漢字・かな）は禁止です。イニシャルかID番号を使用してください。"
+    )
+    
+    if patient_id_input:
+        # 正規表現: 英数字のみ許可
+        if not re.match(r'^[a-zA-Z0-9]+$', patient_id_input):
+            st.error("⚠️ エラー: 半角英数字のみ使用可能です。\n（漢字・ひらがなは入力禁止）")
+            current_patient_id = None
         else:
-            chunks = load_and_chunk_pdfs(pdf_folder_path)
-            if chunks:
-                st.session_state['knowledge_chunks'] = chunks
-                st.success(f"完了！ {len(chunks)}個の知識ブロックを確保。")
-                st.rerun() # 画面更新
-            else: st.error("PDFがないで。")
-
-st.title(APP_TITLE)
-st.markdown(f"#### Supervised by {COMPANY_NAME} | Chief Intensivist KUSANO")
-st.markdown("---")
-
-uploaded_file = st.file_uploader("画像をアップロード", type=["jpg", "jpeg", "png"])
-image_data = None
-if uploaded_file is not None:
-    image_data = Image.open(uploaded_file)
-    st.image(image_data, caption="解析対象", width=300)
-
-# --- 入力エリア ---
-st.subheader("1. 呼吸生理 (Gas Exchange)")
-col_resp1, col_resp2, col_resp3 = st.columns(3)
-with col_resp1:
-    pao2 = st.number_input("PaO2 (mmHg)", 0, 600, 95)
-    paco2 = st.number_input("PaCO2 (mmHg)", 0, 150, 40)
-    age = st.number_input("年齢", 0, 120, 60)
-with col_resp2:
-    fio2_percent = st.number_input("FiO2 (%)", 21, 100, 21)
-    spo2 = st.number_input("SpO2 (%)", 0, 100, 98)
-with col_resp3:
-    fio2 = fio2_percent / 100.0
-    PAO2 = (760 - 47) * fio2 - (paco2 / 0.8)
-    AaDO2 = PAO2 - pao2
-    expected_AaDO2 = (age / 4) + 4
-    pf_ratio = pao2 / fio2
+            current_patient_id = patient_id_input.upper() # 自動で大文字統一
+            st.success(f"Login: {current_patient_id}")
+    else:
+        st.warning("⚠️ IDを入力してください")
+        current_patient_id = None
+        
+    st.markdown("---")
     
-    st.info(f"P/F Ratio: {pf_ratio:.0f}")
-    if AaDO2 > (expected_AaDO2 + 15):
-        st.error(f"A-aDO2: {AaDO2:.1f} (開大！)")
-        aado2_status = "開大 (肺障害)"
-    else:
-        st.success(f"A-aDO2: {AaDO2:.1f} (正常)")
-        aado2_status = "正常"
+    # 履歴消去ボタン (現在のIDのみ)
+    if current_patient_id:
+        if st.button("🗑️ 現在のIDのデータを消去"):
+            st.session_state['patient_db'][current_patient_id] = []
+            st.rerun()
 
-st.subheader("2. 酸素需給 (DO2/VO2)")
-col_do1, col_do2, col_do3 = st.columns(3)
-with col_do1:
-    hb = st.number_input("Hb", 0.0, 25.0, 14.0)
-    co = st.number_input("CO", 0.0, 20.0, 5.0)
-with col_do2:
-    svo2 = st.number_input("SvO2", 0, 100, 75)
-with col_do3:
-    cao2 = (1.34 * hb * spo2/100) + (0.0031 * pao2)
-    cvo2 = (1.34 * hb * svo2/100) + (0.0031 * 40)
-    do2 = co * cao2 * 10
-    vo2 = co * (cao2 - cvo2) * 10
-    o2er = (vo2 / do2) * 100 if do2 > 0 else 0
-    st.info(f"DO2: {do2:.0f} / VO2: {vo2:.0f}")
-    if o2er > 50: st.error(f"O2ER: {o2er:.1f}% (危険)")
-    else: st.success(f"O2ER: {o2er:.1f}% (正常)")
-
-st.subheader("3. 循環・AG")
-col_circ1, col_circ2, col_circ3 = st.columns(3)
-with col_circ1:
-    sbp = st.number_input("収縮期", 0, 300, 120)
-    dbp = st.number_input("拡張期", 0, 200, 80)
-    pulse_pressure = sbp - dbp
-    st.caption(f"脈圧: {pulse_pressure}")
-with col_circ2:
-    hr = st.number_input("HR", 0, 250, 70)
-    ivc_status = st.selectbox("IVC", ["正常", "虚脱 (Dry)", "張っている (Wet)"])
-with col_circ3:
-    ph = st.number_input("pH", 6.80, 7.80, 7.40)
-    lac = st.number_input("乳酸(mg/dL)", 0.0, 200.0, 10.0)
-    alb = st.number_input("Alb", 1.0, 6.0, 4.0)
-    na = st.number_input("Na", 100, 200, 140)
-    cl = st.number_input("Cl", 50, 150, 100)
-    hco3 = st.number_input("HCO3", 0.0, 60.0, 24.0)
-
-question = st.text_area("相談内容", placeholder="例：異常値について評価してくれ。")
+    # PDF設定
+    pdf_folder_path = st.text_input("資料フォルダ (Path)", value="Critical_Care_Docs")
+    if st.button("📚 知識ベース再構築"):
+        chunks = load_and_chunk_pdfs(pdf_folder_path)
+        if chunks:
+            st.session_state['knowledge_chunks'] = chunks
+            st.success(f"完了: {len(chunks)} Chunks")
+        else:
+            st.error("PDFが見つかりません")
 
 # ==========================================
-# 4. 実行
+# 4. メインUI & 計算ロジック
 # ==========================================
-if st.button("草野次長に判断を仰ぐ", type="primary"):
-    if 'knowledge_chunks' not in st.session_state:
-        st.error("🚨 【重要】左のサイドバーにある「📚 知識ベース構築」ボタンを先に押してな！PDFが読み込まれてへんで！")
-    elif not api_key: st.error("APIキー入れてな。")
-    elif not selected_model_name: st.error("サイドバーでモデルを選んで！")
+st.title(f"🏥 {APP_TITLE}")
+st.caption(f"Advanced Clinical Engineering Support | Powered by {COMPANY_NAME}")
+
+if current_patient_id is None:
+    st.error("👈 サイドバーで正しい形式の【患者ID】を入力してください。機能がロックされています。")
+    st.stop() # IDがない場合はここで処理を止める
+
+# --- 入力フォーム ---
+st.info(f"💡 ID: **{current_patient_id}** のデータを入力中。空欄は「不明」として扱います。")
+
+col1, col2, col3 = st.columns(3)
+
+# 1. 呼吸
+with col1:
+    st.subheader("🫁 呼吸 (Resp)")
+    pao2 = st.number_input("PaO2 (mmHg)", value=None, step=1.0)
+    paco2 = st.number_input("PaCO2 (mmHg)", value=None, step=1.0)
+    fio2_percent = st.number_input("FiO2 (%)", value=None, step=1.0)
+    spo2 = st.number_input("SpO2 (%)", value=None, step=1.0)
+
+# 2. 循環・酸素
+with col2:
+    st.subheader("💓 循環 (Circ)")
+    hb = st.number_input("Hb (g/dL)", value=None, step=0.1)
+    co = st.number_input("CO (L/min)", value=None, step=0.1)
+    svo2 = st.number_input("SvO2/ScvO2 (%)", value=None, step=1.0)
+    sbp = st.number_input("收縮期BP", value=None, step=1)
+    dbp = st.number_input("拡張期BP", value=None, step=1)
+
+# 3. 代謝・酸塩基
+with col3:
+    st.subheader("🧪 代謝 (Metab)")
+    ph = st.number_input("pH", value=None, step=0.01, format="%.2f")
+    lac = st.number_input("Lactate (mg/dL)", value=None, step=0.1)
+    hco3 = st.number_input("HCO3-", value=None, step=0.1)
+    na = st.number_input("Na", value=None, step=1)
+    cl = st.number_input("Cl", value=None, step=1)
+    alb = st.number_input("Alb", value=None, step=0.1)
+
+# --- Python計算エンジン ---
+pf_val = None; do2_val = None; vo2_val = None; o2er_val = None; ag_val = None
+pf_msg = "ー"; aado2_msg = "ー"; do2_msg = "ー"; vo2_msg = "ー"; o2er_msg = "ー"; ag_msg = "ー"
+
+if pao2 is not None and fio2_percent is not None and fio2_percent > 0:
+    pf_val = pao2 / (fio2_percent / 100.0)
+    pf_msg = f"{pf_val:.0f}"
+
+if pao2 is not None and paco2 is not None and fio2_percent is not None:
+    PAO2 = (760 - 47) * (fio2_percent/100) - (paco2 / 0.8)
+    aado2_val = PAO2 - pao2
+    aado2_msg = f"{aado2_val:.1f}"
+
+if hb is not None and co is not None and spo2 is not None and pao2 is not None:
+    sa_o2 = spo2 / 100.0
+    cao2 = (1.34 * hb * sa_o2) + (0.0031 * pao2)
+    do2_val = co * cao2 * 10
+    do2_msg = f"{do2_val:.0f}"
+    
+    if svo2 is not None:
+        sv_o2 = svo2 / 100.0
+        cvo2 = (1.34 * hb * sv_o2) + (0.0031 * 40)
+        vo2_val = co * (cao2 - cvo2) * 10
+        vo2_msg = f"{vo2_val:.0f}"
+        if do2_val > 0:
+            o2er_val = (vo2_val / do2_val) * 100
+            o2er_msg = f"{o2er_val:.1f}%"
+
+if na is not None and cl is not None and hco3 is not None:
+    ag_val = na - (cl + hco3)
+    if alb is not None:
+        ag_val = ag_val + 2.5 * (4.0 - alb)
+    ag_msg = f"{ag_val:.1f}"
+
+# --- 計算結果表示 ---
+st.markdown("### 📊 Calculated Parameters")
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("P/F Ratio", pf_msg)
+m2.metric("DO2", do2_msg)
+m3.metric("VO2", vo2_msg)
+m4.metric("O2ER", o2er_msg)
+m5.metric("Anion Gap", ag_msg)
+
+# ==========================================
+# 5. トレンド記録 (患者ID別)
+# ==========================================
+# 現在のIDのDB箱を用意
+if current_patient_id not in st.session_state['patient_db']:
+    st.session_state['patient_db'][current_patient_id] = []
+
+current_history = st.session_state['patient_db'][current_patient_id]
+
+if st.button("💾 現在のデータを記録 (Add to Trend)"):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    record = {
+        "Time": timestamp,
+        "P/F": pf_val if pf_val else 0,
+        "DO2": do2_val if do2_val else 0,
+        "O2ER": o2er_val if o2er_val else 0,
+        "Lactate": lac if lac else 0,
+        "pH": ph if ph else 7.4
+    }
+    st.session_state['patient_db'][current_patient_id].append(record)
+    st.success(f"ID: {current_patient_id} にデータを追加しました。")
+    st.rerun()
+
+# グラフ表示
+if len(current_history) > 0:
+    st.markdown(f"### 📈 Trend View (Patient: {current_patient_id})")
+    df = pd.DataFrame(current_history)
+    
+    t1, t2 = st.columns(2)
+    with t1:
+        st.caption("呼吸・代謝 (P/F, O2ER, Lactate)")
+        st.line_chart(df.set_index("Time")[["P/F", "O2ER", "Lactate"]])
+    with t2:
+        st.caption("酸素供給 (DO2)")
+        st.line_chart(df.set_index("Time")[["DO2"]])
+else:
+    st.info(f"ID: {current_patient_id} のトレンドデータはまだありません。")
+
+# ==========================================
+# 6. AI解析 (RAG + Google Search)
+# ==========================================
+st.markdown("---")
+question = st.text_area("👨‍⚕️ 草野次長への相談 (Consultation)", placeholder="例: Hbが低いですが輸血適応について評価してください。")
+
+if st.button("🔍 草野次長に解析を依頼 (Analysis)", type="primary"):
+    if not api_key:
+        st.error("APIキーを入力してください。")
     else:
+        # データ整形
+        physio_text = f"""
+        【現在データ】
+        [呼吸] P/F:{pf_msg}, PaO2:{pao2}, PaCO2:{paco2}
+        [循環] DO2:{do2_msg}, VO2:{vo2_msg}, O2ER:{o2er_msg}, Hb:{hb}, CO:{co}
+        [代謝] pH:{ph}, Lac:{lac}, AG:{ag_msg}, HCO3:{hco3}
+        [血圧] {sbp}/{dbp}
+        """
+
+        # RAG検索
+        context_text = "（手元の資料には関連情報なし）"
+        if 'knowledge_chunks' in st.session_state:
+            query = f"{question} {physio_text}"
+            chunks = search_relevant_chunks(query, st.session_state['knowledge_chunks'])
+            if chunks:
+                context_text = "\n".join([f"【院内資料: {c['source']}】\n{c['content']}" for c in chunks])
+
+        # プロンプト作成
+        user_prompt = f"""
+        以下の臨床データを評価してください。
+        
+        {physio_text}
+        
+        【相談内容】
+        {question}
+        
+        【院内参照資料 (PDF Search Result)】
+        {context_text}
+        """
+
+        # Google Search Tool設定
+        tools = [{"google_search": {}}]
+        
         try:
-            # AG計算
-            observed_ag = na - (cl + hco3)
-            corrected_ag = observed_ag + 2.5 * (4.0 - alb)
+            model = genai.GenerativeModel(
+                model_name=selected_model_name,
+                tools=tools, # 👈 Google Search Grounding ON
+                generation_config={"temperature": 0.0},
+                system_instruction=KUSANO_BRAIN
+            )
             
-            physio_data = f"""
-            【呼吸生理】P/F:{pf_ratio:.0f}, A-aDO2:{AaDO2:.1f}({aado2_status})
-            【酸素需給】DO2:{do2:.0f}, VO2:{vo2:.0f}, O2ER:{o2er:.1f}%
-            【循環・AG】BP:{sbp}/{dbp}, PP:{pulse_pressure}, IVC:{ivc_status}, 補正AG:{corrected_ag:.1f}, 乳酸:{lac}mg/dL
-            """
-            
-            # --- RAG検索（キーワードを広げて確実にヒットさせる）---
-            # 具体的な数値は検索に使わず、一般的な医学用語で検索する
-            search_keywords = f"{question} 呼吸不全 循環不全 ショック 敗血症 乳酸 アシドーシス ガイドライン 予後"
-            relevant_chunks = search_relevant_chunks(search_keywords, st.session_state['knowledge_chunks'])
-            
-            context_text = ""
-            if relevant_chunks:
-                for i, chunk in enumerate(relevant_chunks):
-                    context_text += f"\n【抜粋{i+1}: {chunk['source']}】\n{chunk['content']}\n"
-            else: context_text = "（関連資料なし）"
-
-            user_data = f"{physio_data}\n【相談】{question}\n【参照資料】{context_text}"
-
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(selected_model_name, generation_config={"temperature": 0.0}, system_instruction=KUSANO_BRAIN)
-            
-            with st.spinner(f"資料を参照中... (Using {selected_model_name})"):
-                content = [user_data]
-                if image_data:
-                    # モデル名にvisionや1.5が含まれていれば画像を送る
-                    if 'vision' in selected_model_name or '1.5' in selected_model_name:
-                        content.append(image_data)
-                    else:
-                        st.warning(f"※選択されたモデル({selected_model_name})は画像非対応のため、画像は無視しました。")
-
-                response = model.generate_content(content)
-            
-            st.markdown("### 👨‍⚕️ 草野次長の判断")
+            with st.spinner("草野次長が思考中... (Searching Guidelines & Web)"):
+                response = model.generate_content(user_prompt)
+                
+            st.markdown("### 👨‍⚕️ Analysis Result")
             st.write(response.text)
             
-            # 出典を常に表示
-            st.markdown("---")
-            st.markdown("##### 🔍 根拠となった資料の原文")
-            st.text(context_text)
+            # 参照元の表示 (Web検索を使用した場合)
+            if response.candidates[0].grounding_metadata.search_entry_point:
+                st.caption("🌐 Used Google Search Sources")
+                st.write(response.candidates[0].grounding_metadata.search_entry_point.rendered_content)
 
         except Exception as e:
-            st.error(f"エラー発生: {e}")
+            st.error(f"Error: {e}")
