@@ -2,7 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import pandas as pd
 from PIL import Image
-import re  # 👈 これがないとエラーになります！
+import re
 import json
 from datetime import datetime
 from duckduckgo_search import DDGS # 外部検索エンジン
@@ -30,7 +30,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 脳みそ (RAG型・検索結果読込)
+# 1. 脳みそ
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」です。
@@ -39,7 +39,6 @@ KUSANO_BRAIN = """
 【絶対ルール】
 - 提供された【検索結果 (Search Results)】の内容を事実として扱い、そこから医学的根拠を引用してください。
 - 検索結果にない情報について、自身の記憶のみで断定することは避けてください（ハルシネーション防止）。
-- 引用する際は、検索結果に含まれるソース元（Source）を明記してください。
 
 【回答フォーマット】
 1. **Clinical Summary**: 患者の状態要約
@@ -55,9 +54,10 @@ if 'patient_db' not in st.session_state:
     st.session_state['patient_db'] = {}
 
 current_patient_id = None 
+selected_model_name = None
 
 # ==========================================
-# 3. サイドバー (保存・読込機能 修正済)
+# 3. サイドバー
 # ==========================================
 with st.sidebar:
     st.title("⚙️ System Config")
@@ -71,47 +71,54 @@ with st.sidebar:
     
     if api_key:
         genai.configure(api_key=api_key)
+        
+        # ★ここが修正点：利用可能なモデルをAPIから聞いてリストにする
+        try:
+            # generateContentが使えるモデルだけをリストアップ
+            model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            
+            # デフォルトでProモデルがあればそれを優先
+            default_index = 0
+            for i, m_name in enumerate(model_list):
+                if "gemini-1.5-pro" in m_name:
+                    default_index = i
+                    break
+            
+            selected_model_name = st.selectbox("使用モデルを選択", model_list, index=default_index)
+        except Exception as e:
+            st.error(f"モデルリストの取得に失敗: {e}")
 
     st.markdown("---")
     patient_id_input = st.text_input("🆔 患者ID (半角英数)", value="TEST1", max_chars=10)
     
     if patient_id_input:
-        # 正規表現チェック (reモジュールを使用)
         if not re.match(r'^[a-zA-Z0-9]+$', patient_id_input):
-            st.error("⚠️ 半角英数字のみ使用可能です")
+            st.error("⚠️ 半角英数字のみ")
         else:
             current_patient_id = patient_id_input.upper()
             st.success(f"Login: {current_patient_id}")
             
-            # --- 保存・読込エリア ---
-            st.markdown("### 💾 データバックアップ")
+            # 保存・読込
             current_data = st.session_state['patient_db'].get(current_patient_id, [])
             
-            # データがある時だけ保存ボタンを有効化
             if current_data:
                 json_str = json.dumps(current_data, indent=2, default=str, ensure_ascii=False)
-                st.download_button(
-                    label="📥 データを保存", 
-                    data=json_str, 
-                    file_name=f"{current_patient_id}.json", 
-                    mime="application/json",
-                    key="dl_btn"
-                )
+                st.download_button("📥 データを保存", json_str, file_name=f"{current_patient_id}.json", mime="application/json", key="dl_btn")
             else:
-                st.info("※数値を記録すると保存ボタンが現れます")
-                st.button("📥 データなし", disabled=True, key="dl_btn_disable")
+                st.info("※記録すると保存ボタンが出ます")
+                st.button("📥 データなし", disabled=True, key="dl_btn_d")
             
             uploaded_file = st.file_uploader("📤 データを復元", type=["json"], key="up_btn")
             if uploaded_file:
                 try:
                     loaded_data = json.load(uploaded_file)
                     st.session_state['patient_db'][current_patient_id] = loaded_data
-                    st.success("復元完了！")
-                    if st.button("🔄 グラフを反映"): st.rerun()
+                    st.success("復元完了")
+                    if st.button("🔄 反映"): st.rerun()
                 except: pass
 
             st.markdown("---")
-            if st.button("🗑️ 履歴消去", key="del_btn"):
+            if st.button("🗑️ 履歴消去"):
                 st.session_state['patient_db'][current_patient_id] = []
                 st.rerun()
 
@@ -123,7 +130,7 @@ st.title(f"👨‍⚕️ {APP_TITLE}")
 if not current_patient_id:
     st.stop()
 
-st.caption(f"Patient ID: **{current_patient_id}**")
+st.caption(f"Patient ID: **{current_patient_id}** | Model: **{selected_model_name}**")
 tab1, tab2 = st.tabs(["📝 総合診断 (With Search)", "📈 トレンド管理"])
 
 # === TAB 2: トレンド管理 ===
@@ -162,7 +169,7 @@ with tab2:
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
-        # 数値化処理（グラフ破損防止）
+        # ★数値化処理
         for col in ["P/F", "DO2", "O2ER", "Lactate", "Hb"]:
             if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
         
@@ -173,6 +180,9 @@ with tab2:
         with g2:
             st.markdown("##### 循環")
             st.line_chart(df.set_index("Time")[["DO2", "Hb"]])
+        
+        with st.expander("🔍 生データ確認"):
+            st.dataframe(df)
 
 # === TAB 1: 総合診断 (DuckDuckGo自力検索版) ===
 with tab1:
@@ -184,34 +194,32 @@ with tab1:
     if st.button("🔍 診断実行 (検索付)"):
         if not api_key:
             st.error("APIキーを入れてください！")
+        elif not selected_model_name:
+            st.error("モデルが選択されていません。サイドバーを確認してください。")
         else:
             trend_str = "なし"
             hist = st.session_state['patient_db'].get(current_patient_id, [])
             if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
             
-            # --- 1. Pythonで検索を実行 ---
+            # 1. 検索実行 (DuckDuckGo)
             search_context = ""
             try:
                 with st.spinner("最新情報を検索中... (Powered by DuckDuckGo)"):
-                    query = f"医療ガイドライン {hist_text[:40]} 診断 治療"
+                    query = f"医療ガイドライン {hist_text[:30]} 診断 治療"
                     with DDGS() as ddgs:
-                        # 日本語の結果を3件取得
                         results = list(ddgs.text(query, region='jp-jp', max_results=3))
                         for i, r in enumerate(results):
                             search_context += f"【検索結果{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nContent: {r['body']}\n\n"
             except Exception as e:
                 search_context = f"（検索エラー: {e}）"
 
-            # --- 2. AIに情報を渡す ---
+            # 2. AIへプロンプト
             prompt_text = f"""
             以下の情報を【統合的に】分析してください。
-
             【Tab 1: 病歴】{hist_text}
             【Tab 1: 検査】{lab_text}
             【Tab 2: トレンド(直近5点)】{trend_str}
-
-            【検索された最新情報 (Search Results)】
-            {search_context}
+            【検索された最新情報】{search_context}
             """
             
             content = [prompt_text]
@@ -219,8 +227,8 @@ with tab1:
                 for f in up_file: content.append(Image.open(f))
 
             try:
-                # toolsを使わない (エラー回避)
-                model = genai.GenerativeModel("gemini-1.5-pro", system_instruction=KUSANO_BRAIN)
+                # ★ここが重要：選択されたモデル名(変数)を使う！
+                model = genai.GenerativeModel(model_name=selected_model_name, system_instruction=KUSANO_BRAIN)
                 
                 with st.spinner("思考中... (検索結果を統合解析)"):
                     res = model.generate_content(content)
