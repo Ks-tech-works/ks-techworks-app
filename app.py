@@ -94,8 +94,6 @@ current_patient_id = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ System Config")
-    
-    # バージョン表示（0.8.3ならOK）
     st.caption(f"GenAI Lib: {genai.__version__}")
 
     try:
@@ -133,7 +131,7 @@ st.caption(f"Patient ID: **{current_patient_id}**")
 tab1, tab2 = st.tabs(["📝 総合診断 (Crossover)", "📈 トレンド管理"])
 
 # ------------------------------------------------
-# TAB 2: トレンド管理
+# TAB 2: トレンド管理 (ここを修正しました！)
 # ------------------------------------------------
 with tab2:
     st.info("数値入力")
@@ -164,7 +162,6 @@ with tab2:
 
     if st.button("💾 記録"):
         if current_patient_id not in st.session_state['patient_db']: st.session_state['patient_db'][current_patient_id] = []
-        # 数値化して保存
         st.session_state['patient_db'][current_patient_id].append({
             "Time": datetime.now().strftime("%H:%M:%S"), 
             "P/F": pf, "DO2": do2, "O2ER": o2er, "Lactate": lac, "Hb": hb
@@ -177,10 +174,18 @@ with tab2:
         # 強制数値変換（グラフ破損防止）
         for col in ["P/F", "DO2", "O2ER", "Lactate", "Hb"]:
             if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
-        st.line_chart(df.set_index("Time")[["P/F", "O2ER", "Lactate"]])
+        
+        # ★ここを修正！グラフを2つ並べて表示
+        g1, g2 = st.columns(2)
+        with g1:
+            st.markdown("##### 呼吸・代謝 (P/F, O2ER, Lac)")
+            st.line_chart(df.set_index("Time")[["P/F", "O2ER", "Lactate"]])
+        with g2:
+            st.markdown("##### 循環 (DO2, Hb)")
+            st.line_chart(df.set_index("Time")[["DO2", "Hb"]])
 
 # ------------------------------------------------
-# TAB 1: 総合診断 (実行時ツール渡し)
+# TAB 1: 総合診断
 # ------------------------------------------------
 with tab1:
     col1, col2 = st.columns(2)
@@ -208,16 +213,12 @@ with tab1:
                 for f in up_file: content.append(Image.open(f))
 
             try:
-                # 1. モデル作成（ここではツールを渡さない）
                 model = genai.GenerativeModel("gemini-1.5-pro", system_instruction=KUSANO_BRAIN)
-                
                 with st.spinner("思考中... (Google検索で裏付けを確認中)"):
-                    # 2. 実行時にツールを渡す（エラー回避）
                     res = model.generate_content(
                         content,
                         tools=[{"google_search": {}}]
                     )
-                
                 st.markdown("### 👨‍⚕️ Assessment Result")
                 st.write(res.text)
                 
@@ -229,5 +230,3 @@ with tab1:
 
             except Exception as e:
                 st.error(f"エラー発生: {e}")
-                if "Unknown field" in str(e):
-                    st.error("⚠️ サーバーのバージョン不整合です。New appを作り直すと直ります。")
