@@ -1,10 +1,27 @@
+import os
+import sys
+import subprocess
+import json
+
+# ---------------------------------------------------------
+# ★サーバーのライブラリを強制的に最新版にする
+# ---------------------------------------------------------
+try:
+    import google.generativeai
+    if getattr(google.generativeai, "__version__", "0.0.0") < "0.8.3":
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
+        import google.generativeai as genai
+    else:
+        import google.generativeai as genai
+except:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
+    import google.generativeai as genai
+
 import streamlit as st
-import google.generativeai as genai
 import pandas as pd
 from PIL import Image
-from duckduckgo_search import DDGS
+import re
 from datetime import datetime
-import json
 
 # ==========================================
 # 0. アプリ設定
@@ -29,37 +46,39 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 脳みそ (自力検索・RAG型)
+# 1. 脳みそ
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」です。
-提供された「患者データ」と「検索された最新情報」を統合し、論理的に診断推論を行ってください。
+提供された情報を統合し、論理的に診断推論を行ってください。
 
-【絶対ルール：情報の信頼性評価】
-提供された【検索結果】の中から、信頼できる情報源（学会、公的機関、論文）を優先して根拠としてください。
-検索結果に含まれる内容のみを事実として扱い、あなたの記憶だけで不確実な情報を補完（ハルシネーション）することは厳禁です。
+【絶対ルール】
+あなたはAIであり、ハルシネーション（事実に基づかない回答）を起こすリスクがあります。
+**必ず「Google検索ツール」を使用して裏付けを取り、事実に基づいた回答のみを行ってください。**
+もし検索機能がエラーで使えない場合は、決して推測で回答せず、正直に「システムエラーのため回答できません」と伝えてください。
+
+【情報の格付け】
+- 推奨: .go.jp, .ac.jp, .or.jp (公的機関・学会)
+- 注意: 個人ブログ、まとめサイト (原則除外)
 
 【回答フォーマット】
-1. **Clinical Summary**: 患者の状態要約
-2. **Integrated Assessment**: 病歴×数値トレンド×検索結果の統合見解
-3. **Evidence**: 根拠とした文献（検索結果のSource）と信頼度
+1. **Clinical Summary**: 状態要約
+2. **Integrated Assessment**: 病歴×数値トレンドの統合見解
+3. **Evidence**: 根拠とした文献と信頼度
 4. **Plan**: 推奨アクション
 """
 
 # ==========================================
-# 2. データ管理
+# 2. データ管理 & サイドバー
 # ==========================================
 if 'patient_db' not in st.session_state:
     st.session_state['patient_db'] = {}
 
 current_patient_id = None 
 
-# ==========================================
-# 3. サイドバー
-# ==========================================
 with st.sidebar:
     st.title("⚙️ System Config")
-    st.caption("Mode: External Search (DDG)")
+    st.caption(f"GenAI Lib: {genai.__version__}")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -80,18 +99,38 @@ with st.sidebar:
             current_patient_id = patient_id_input.upper()
             st.success(f"Login: {current_patient_id}")
             
-            # データ保存・読込
-            current_data = st.session_state['patient_db'].get(current_patient_id, [])
-            if current_data:
-                json_str = json.dumps(current_data, indent=2, default=str)
-                st.download_button("📥 データ保存", json_str, file_name=f"{current_patient_id}.json", mime="application/json")
+            # --- ここを修正：ボタンの挙動を分かりやすく ---
+            st.markdown("### 💾 データバックアップ")
             
-            uploaded_file = st.file_uploader("📤 データ読込", type=["json"])
+            current_data = st.session_state['patient_db'].get(current_patient_id, [])
+            
+            if current_data:
+                # データがある場合：ダウンロードボタンを表示
+                # ensure_ascii=False で日本語文字化けを防止
+                json_str = json.dumps(current_data, indent=2, default=str, ensure_ascii=False)
+                st.download_button(
+                    label="📥 データを保存 (Download)",
+                    data=json_str,
+                    file_name=f"{current_patient_id}.json",
+                    mime="application/json",
+                    key="dl_btn_active"
+                )
+            else:
+                # データがない場合：理由を表示してグレーアウト
+                st.info("※「📈 トレンド管理」タブで数値を入力し、「💾 記録」ボタンを押すと、ここに保存ボタンが現れます。")
+                st.button("📥 データなし (保存不可)", disabled=True, key="dl_btn_disabled")
+            
+            uploaded_file = st.file_uploader("📤 データを復元 (Upload)", type=["json"])
             if uploaded_file:
                 try:
-                    st.session_state['patient_db'][current_patient_id] = json.load(uploaded_file)
-                    st.success("復元完了")
-                except: pass
+                    loaded_data = json.load(uploaded_file)
+                    st.session_state['patient_db'][current_patient_id] = loaded_data
+                    st.success(f"復元完了！ ({len(loaded_data)}件)")
+                    # 画面更新ボタン
+                    if st.button("🔄 グラフを更新"):
+                        st.rerun()
+                except:
+                    st.error("ファイルが壊れています")
 
             st.markdown("---")
             if st.button("🗑️ 履歴消去"):
@@ -99,7 +138,7 @@ with st.sidebar:
                 st.rerun()
 
 # ==========================================
-# 4. メイン画面
+# 3. メイン画面
 # ==========================================
 st.title(f"👨‍⚕️ {APP_TITLE}")
 
@@ -107,13 +146,11 @@ if not current_patient_id:
     st.stop()
 
 st.caption(f"Patient ID: **{current_patient_id}**")
-tab1, tab2 = st.tabs(["📝 総合診断 (With Search)", "📈 トレンド管理"])
+tab1, tab2 = st.tabs(["📝 総合診断 (Strict Search)", "📈 トレンド管理"])
 
-# ------------------------------------------------
-# TAB 2: トレンド管理
-# ------------------------------------------------
+# === TAB 2: トレンド管理 ===
 with tab2:
-    st.info("数値入力")
+    st.info("数値を入力して「記録」を押してください")
     c1, c2, c3 = st.columns(3)
     pao2 = c1.number_input("PaO2", step=1.0, value=None, key="n_pao2")
     fio2 = c1.number_input("FiO2", step=1.0, value=None, key="n_fio2")
@@ -139,7 +176,8 @@ with tab2:
     if do2: cols[1].metric("DO2", f"{do2:.0f}")
     if o2er: cols[2].metric("O2ER", f"{o2er:.1f}%")
 
-    if st.button("💾 記録"):
+    # 記録ボタン (ここを押さないと保存ボタンは出ません！)
+    if st.button("💾 記録 (Memory)"):
         if current_patient_id not in st.session_state['patient_db']: st.session_state['patient_db'][current_patient_id] = []
         st.session_state['patient_db'][current_patient_id].append({"Time": datetime.now().strftime("%H:%M:%S"), "P/F": pf, "DO2": do2, "O2ER": o2er, "Lactate": lac, "Hb": hb})
         st.rerun()
@@ -158,16 +196,14 @@ with tab2:
             st.markdown("##### 循環")
             st.line_chart(df.set_index("Time")[["DO2", "Hb"]])
 
-# ------------------------------------------------
-# TAB 1: 総合診断 (DuckDuckGo実装版)
-# ------------------------------------------------
+# === TAB 1: 診断 (厳格モード) ===
 with tab1:
     col1, col2 = st.columns(2)
     hist_text = col1.text_area("病歴")
     lab_text = col1.text_area("検査データ")
     up_file = col2.file_uploader("画像", accept_multiple_files=True)
 
-    if st.button("🔍 診断実行 (検索付)"):
+    if st.button("🔍 診断実行 (検索必須)"):
         if not api_key:
             st.error("APIキーを入れてください！")
         else:
@@ -175,49 +211,31 @@ with tab1:
             hist = st.session_state['patient_db'].get(current_patient_id, [])
             if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
             
-            # --- 1. Pythonで検索を実行 (エラー知らず) ---
-            search_context = ""
-            try:
-                with st.spinner("最新情報を検索中... (Powered by DuckDuckGo)"):
-                    # 検索ワードを作成
-                    query = f"医療ガイドライン {hist_text[:40]} 診断 治療"
-                    with DDGS() as ddgs:
-                        # 日本語の結果を3件取得
-                        results = list(ddgs.text(query, region='jp-jp', max_results=3))
-                        for i, r in enumerate(results):
-                            search_context += f"【検索結果{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nContent: {r['body']}\n\n"
-            except Exception as e:
-                search_context = f"（検索エラー: {e}）"
-
-            # --- 2. AIに情報を渡す ---
-            prompt_text = f"""
-            以下の情報を【統合的に】分析してください。
-
-            【Tab 1: 病歴】{hist_text}
-            【Tab 1: 検査】{lab_text}
-            【Tab 2: トレンド(直近5点)】{trend_str}
-
-            【検索された最新情報 (Search Results)】
-            {search_context}
-            """
-            
-            content = [prompt_text]
+            content = [f"病歴: {hist_text}\nデータ: {lab_text}\nトレンド: {trend_str}"]
             if up_file:
                 for f in up_file: content.append(Image.open(f))
 
             try:
-                # toolsは使わない (これがエラー回避の絶対条件)
+                # 1. モデル作成
                 model = genai.GenerativeModel("gemini-1.5-pro", system_instruction=KUSANO_BRAIN)
                 
-                with st.spinner("思考中... (検索結果を統合解析)"):
-                    res = model.generate_content(content)
+                with st.spinner("思考中... (Google検索で裏付け確認中)"):
+                    # 2. 実行時にツールを渡す
+                    res = model.generate_content(
+                        content,
+                        tools=[{"google_search": {}}]
+                    )
                 
                 st.markdown("### 👨‍⚕️ Assessment Result")
                 st.write(res.text)
                 
-                if search_context and "検索エラー" not in search_context:
-                    with st.expander("🔍 参照した検索結果ソース"):
-                        st.text(search_context)
+                if res.candidates[0].grounding_metadata.search_entry_point:
+                    st.success("✅ 文献・ガイドラインを参照しました")
+                    st.write(res.candidates[0].grounding_metadata.search_entry_point.rendered_content)
+                else:
+                    st.warning("⚠️ 検索を行いましたが、関連する文献が見つかりませんでした。")
 
             except Exception as e:
-                st.error(f"エラー発生: {e}")
+                st.error("❌ 検索機能エラー")
+                st.error(f"詳細: {e}")
+                st.error("ハルシネーション防止のため、診断を中止します。")
