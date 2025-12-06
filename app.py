@@ -2,9 +2,10 @@ import streamlit as st
 import google.generativeai as genai
 import pandas as pd
 from PIL import Image
-from duckduckgo_search import DDGS
-from datetime import datetime
+import re  # 👈 これがないとエラーになります！
 import json
+from datetime import datetime
+from duckduckgo_search import DDGS # 外部検索エンジン
 
 # ==========================================
 # 0. アプリ設定
@@ -56,7 +57,7 @@ if 'patient_db' not in st.session_state:
 current_patient_id = None 
 
 # ==========================================
-# 3. サイドバー (保存機能付き)
+# 3. サイドバー (保存・読込機能 修正済)
 # ==========================================
 with st.sidebar:
     st.title("⚙️ System Config")
@@ -75,8 +76,9 @@ with st.sidebar:
     patient_id_input = st.text_input("🆔 患者ID (半角英数)", value="TEST1", max_chars=10)
     
     if patient_id_input:
+        # 正規表現チェック (reモジュールを使用)
         if not re.match(r'^[a-zA-Z0-9]+$', patient_id_input):
-            st.error("⚠️ 半角英数字のみ")
+            st.error("⚠️ 半角英数字のみ使用可能です")
         else:
             current_patient_id = patient_id_input.upper()
             st.success(f"Login: {current_patient_id}")
@@ -87,7 +89,6 @@ with st.sidebar:
             
             # データがある時だけ保存ボタンを有効化
             if current_data:
-                # 日本語文字化け防止 (ensure_ascii=False)
                 json_str = json.dumps(current_data, indent=2, default=str, ensure_ascii=False)
                 st.download_button(
                     label="📥 データを保存", 
@@ -97,7 +98,8 @@ with st.sidebar:
                     key="dl_btn"
                 )
             else:
-                st.button("📥 データなし (保存不可)", disabled=True, key="dl_btn_disable")
+                st.info("※数値を記録すると保存ボタンが現れます")
+                st.button("📥 データなし", disabled=True, key="dl_btn_disable")
             
             uploaded_file = st.file_uploader("📤 データを復元", type=["json"], key="up_btn")
             if uploaded_file:
@@ -160,7 +162,7 @@ with tab2:
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
-        # ★数値化処理（グラフ破損防止）
+        # 数値化処理（グラフ破損防止）
         for col in ["P/F", "DO2", "O2ER", "Lactate", "Hb"]:
             if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
         
@@ -172,7 +174,7 @@ with tab2:
             st.markdown("##### 循環")
             st.line_chart(df.set_index("Time")[["DO2", "Hb"]])
 
-# === TAB 1: 総合診断 (DDG自力検索版) ===
+# === TAB 1: 総合診断 (DuckDuckGo自力検索版) ===
 with tab1:
     col1, col2 = st.columns(2)
     hist_text = col1.text_area("病歴")
@@ -187,7 +189,7 @@ with tab1:
             hist = st.session_state['patient_db'].get(current_patient_id, [])
             if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
             
-            # --- 1. Pythonで検索を実行 (エラー知らず) ---
+            # --- 1. Pythonで検索を実行 ---
             search_context = ""
             try:
                 with st.spinner("最新情報を検索中... (Powered by DuckDuckGo)"):
@@ -217,7 +219,7 @@ with tab1:
                 for f in up_file: content.append(Image.open(f))
 
             try:
-                # 3. AIには「ただ答えるだけ」をさせる (toolsを使わない＝エラー回避)
+                # toolsを使わない (エラー回避)
                 model = genai.GenerativeModel("gemini-1.5-pro", system_instruction=KUSANO_BRAIN)
                 
                 with st.spinner("思考中... (検索結果を統合解析)"):
