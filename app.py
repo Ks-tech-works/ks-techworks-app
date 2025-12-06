@@ -1,26 +1,20 @@
 import os
 import sys
 import subprocess
-import time
+import json # 保存用にjsonを使う
 
-# ---------------------------------------------------------
-# ★最優先: サーバーのライブラリを強制的に最新版にする
-# ---------------------------------------------------------
+# --- 強制アップデート ---
 try:
     import google.generativeai
-    current_ver = getattr(google.generativeai, "__version__", "0.0.0")
-    if current_ver < "0.8.3":
+    if getattr(google.generativeai, "__version__", "0.0.0") < "0.8.3":
         subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
         import google.generativeai as genai
     else:
         import google.generativeai as genai
-except ImportError:
+except:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
     import google.generativeai as genai
 
-# ---------------------------------------------------------
-# 通常のライブラリ
-# ---------------------------------------------------------
 import streamlit as st
 import pandas as pd
 from PIL import Image
@@ -50,33 +44,21 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 脳みそ (情報の格付け機能 + クロスオーバー思考)
+# 1. 脳みそ
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」です。
 提供された情報を統合し、論理的に診断推論を行ってください。
 
-【絶対ルール：情報の格付け (Source Grading)】
+【絶対ルール】
 Google検索機能を使用する際は、必ず情報の出所（ドメイン）を確認し、以下の基準で情報の信頼性を評価してください。
 
-1. **推奨ソース (High Reliability)**:
-   - 公的機関: `.go.jp`, `.gov`
-   - 学術機関: `.ac.jp`, `.edu`
-   - 学会・公的団体: `.or.jp`
-   - 信頼できる医学誌: `jstage`, `pubmed`, `nejm` など
-   👉 これらを最優先し、「推奨される」と判断する。
-
-2. **非推奨・注意ソース (Low Reliability)**:
-   - 個人ブログ、まとめサイト、Q&Aサイト
-   👉 原則除外。引用時は「※信頼性が低いですが」と注記する。
-
-【思考プロセス】
-1. **時系列トレンドの解釈**: Tab2のデータから、急激な変化（Acute）か、緩徐な変化（Chronic）かを見極める。
-2. **コンテキストの結合**: 「数値の異常」が「既往歴」で説明つくものか、「新規合併症」かを評価する。
+1. **推奨ソース**: .go.jp, .ac.jp, .or.jp, pubmed, jstage など
+2. **非推奨**: 個人ブログ、まとめサイト
 
 【回答フォーマット】
 1. **Clinical Summary**: 患者の状態要約。
-2. **Integrated Assessment**: **病歴と数値を統合した見解**。
+2. **Integrated Assessment**: 病歴と数値を統合した見解。
 3. **Evidence & Grading**: 参照文献と信頼度（高/低）。
 4. **Plan / Action**: 推奨アクション。
 """
@@ -90,7 +72,7 @@ if 'patient_db' not in st.session_state:
 current_patient_id = None 
 
 # ==========================================
-# 3. サイドバー
+# 3. サイドバー (保存・読込機能追加！)
 # ==========================================
 with st.sidebar:
     st.title("⚙️ System Config")
@@ -98,7 +80,7 @@ with st.sidebar:
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
-        st.success("🔑 API Key Loaded!")
+        st.success("🔑 API Key Loaded")
     except:
         api_key = st.text_input("Gemini API Key", type="password")
     
@@ -114,7 +96,35 @@ with st.sidebar:
         else:
             current_patient_id = patient_id_input.upper()
             st.success(f"Login: {current_patient_id}")
-            if st.button("🗑️ 履歴消去"):
+            
+            # --- データの保存・読込 ---
+            st.markdown("### 💾 データ管理")
+            
+            # 保存ボタン
+            # 現在のIDのデータをJSON文字列に変換してダウンロードさせる
+            current_data = st.session_state['patient_db'].get(current_patient_id, [])
+            if current_data:
+                json_str = json.dumps(current_data, indent=2, default=str)
+                st.download_button(
+                    label="📥 データを保存 (Download)",
+                    data=json_str,
+                    file_name=f"{current_patient_id}_data.json",
+                    mime="application/json"
+                )
+            
+            # 読込ボタン
+            uploaded_file = st.file_uploader("📤 データを読込 (Upload)", type=["json"])
+            if uploaded_file is not None:
+                try:
+                    loaded_data = json.load(uploaded_file)
+                    # データを上書き結合
+                    st.session_state['patient_db'][current_patient_id] = loaded_data
+                    st.success("復元しました！")
+                except:
+                    st.error("ファイルが壊れています")
+
+            st.markdown("---")
+            if st.button("🗑️ 履歴全消去"):
                 st.session_state['patient_db'][current_patient_id] = []
                 st.rerun()
 
@@ -131,10 +141,10 @@ st.caption(f"Patient ID: **{current_patient_id}**")
 tab1, tab2 = st.tabs(["📝 総合診断 (Crossover)", "📈 トレンド管理"])
 
 # ------------------------------------------------
-# TAB 2: トレンド管理 (ここを修正しました！)
+# TAB 2: トレンド管理
 # ------------------------------------------------
 with tab2:
-    st.info("数値入力")
+    st.info("数値入力 (必要な項目のみ)")
     c1, c2, c3 = st.columns(3)
     pao2 = c1.number_input("PaO2", step=1.0, value=None, key="n_pao2")
     fio2 = c1.number_input("FiO2", step=1.0, value=None, key="n_fio2")
@@ -160,7 +170,7 @@ with tab2:
     if do2: cols[1].metric("DO2", f"{do2:.0f}")
     if o2er: cols[2].metric("O2ER", f"{o2er:.1f}%")
 
-    if st.button("💾 記録"):
+    if st.button("💾 記録 (Memory)"):
         if current_patient_id not in st.session_state['patient_db']: st.session_state['patient_db'][current_patient_id] = []
         st.session_state['patient_db'][current_patient_id].append({
             "Time": datetime.now().strftime("%H:%M:%S"), 
@@ -171,17 +181,16 @@ with tab2:
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
-        # 強制数値変換（グラフ破損防止）
+        # 数値変換
         for col in ["P/F", "DO2", "O2ER", "Lactate", "Hb"]:
             if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        # ★ここを修正！グラフを2つ並べて表示
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown("##### 呼吸・代謝 (P/F, O2ER, Lac)")
+            st.markdown("##### 呼吸・代謝")
             st.line_chart(df.set_index("Time")[["P/F", "O2ER", "Lactate"]])
         with g2:
-            st.markdown("##### 循環 (DO2, Hb)")
+            st.markdown("##### 循環")
             st.line_chart(df.set_index("Time")[["DO2", "Hb"]])
 
 # ------------------------------------------------
