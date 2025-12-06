@@ -1,5 +1,27 @@
+import os
+import sys
+import subprocess
+import time
+
+# ---------------------------------------------------------
+# ★最優先: サーバーのライブラリを強制的に最新版にする
+# ---------------------------------------------------------
+try:
+    import google.generativeai
+    current_ver = getattr(google.generativeai, "__version__", "0.0.0")
+    if current_ver < "0.8.3":
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
+        import google.generativeai as genai
+    else:
+        import google.generativeai as genai
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
+    import google.generativeai as genai
+
+# ---------------------------------------------------------
+# 通常のライブラリ
+# ---------------------------------------------------------
 import streamlit as st
-import google.generativeai as genai
 import pandas as pd
 from PIL import Image
 import re
@@ -28,7 +50,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 脳みそ (情報ソース格付け機能搭載)
+# 1. 脳みそ (情報の格付け機能 + クロスオーバー思考)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」です。
@@ -38,23 +60,25 @@ KUSANO_BRAIN = """
 Google検索機能を使用する際は、必ず情報の出所（ドメイン）を確認し、以下の基準で情報の信頼性を評価してください。
 
 1. **推奨ソース (High Reliability)**:
-   - 公的機関: `.go.jp`, `.gov` (厚労省、CDCなど)
-   - 学術機関: `.ac.jp`, `.edu` (大学病院、研究機関)
-   - 学会・公的団体: `.or.jp` (日本循環器学会、JSEPTICなど)
+   - 公的機関: `.go.jp`, `.gov`
+   - 学術機関: `.ac.jp`, `.edu`
+   - 学会・公的団体: `.or.jp`
    - 信頼できる医学誌: `jstage`, `pubmed`, `nejm` など
-   👉 これらの情報を最優先し、「推奨される」と判断して良い。
+   👉 これらを最優先し、「推奨される」と判断する。
 
 2. **非推奨・注意ソース (Low Reliability)**:
-   - 個人のブログ、まとめサイト、Q&Aサイト、企業の広告記事
-   👉 これらの情報は原則として除外するか、引用する場合は必ず「※信頼性が低い情報源ですが」と**注意書き**を付けること。
+   - 個人ブログ、まとめサイト、Q&Aサイト
+   👉 原則除外。引用時は「※信頼性が低いですが」と注記する。
+
+【思考プロセス】
+1. **時系列トレンドの解釈**: Tab2のデータから、急激な変化（Acute）か、緩徐な変化（Chronic）かを見極める。
+2. **コンテキストの結合**: 「数値の異常」が「既往歴」で説明つくものか、「新規合併症」かを評価する。
 
 【回答フォーマット】
 1. **Clinical Summary**: 患者の状態要約。
-2. **Integrated Assessment**: 病歴と数値を統合した見解。
-3. **Plan / Action**: 推奨されるアクション。
-4. **Evidence & Grading**:
-   - 参照したガイドラインや文献を挙げ、その後に必ず【信頼度: 高/低】を記載せよ。
-   - 例: 「日本集中治療医学会 敗血症ガイドライン2020 (信頼度: 高)」
+2. **Integrated Assessment**: **病歴と数値を統合した見解**。
+3. **Evidence & Grading**: 参照文献と信頼度（高/低）。
+4. **Plan / Action**: 推奨アクション。
 """
 
 # ==========================================
@@ -63,74 +87,56 @@ Google検索機能を使用する際は、必ず情報の出所（ドメイン�
 if 'patient_db' not in st.session_state:
     st.session_state['patient_db'] = {}
 
-# ==========================================
-# 3. サイドバー (ID管理)
-# ==========================================
 current_patient_id = None 
 
+# ==========================================
+# 3. サイドバー
+# ==========================================
 with st.sidebar:
     st.title("⚙️ System Config")
     
-    # 1. SecretsからAPIキーを自動読み込み
+    # バージョン表示（0.8.3ならOK）
+    st.caption(f"GenAI Lib: {genai.__version__}")
+
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
-        st.success("🔑 API Key Loaded!")  # 読み込み成功マーク
+        st.success("🔑 API Key Loaded!")
     except:
-        # 万が一設定し忘れた時用（またはローカル用）の手動入力
         api_key = st.text_input("Gemini API Key", type="password")
     
-    selected_model_name = "gemini-1.5-pro"
     if api_key:
         genai.configure(api_key=api_key)
-        try:
-            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            pro_models = [m for m in models if '1.5-pro' in m]
-            if pro_models:
-                selected_model_name = st.selectbox("AI Model", models, index=models.index(pro_models[0]))
-        except: pass
 
     st.markdown("---")
-    
-    patient_id_input = st.text_input(
-        "🆔 患者ID (半角英数のみ)", 
-        value="TEST1", 
-        max_chars=10,
-        help="日本語禁止。イニシャルかID番号のみ。"
-    )
+    patient_id_input = st.text_input("🆔 患者ID (半角英数)", value="TEST1", max_chars=10)
     
     if patient_id_input:
         if not re.match(r'^[a-zA-Z0-9]+$', patient_id_input):
-            st.error("⚠️ エラー: 半角英数字のみ使用可能です。")
-            current_patient_id = None
+            st.error("⚠️ 半角英数字のみ")
         else:
             current_patient_id = patient_id_input.upper()
             st.success(f"Login: {current_patient_id}")
-            
-            st.markdown("---")
-            if st.button("🗑️ このIDのデータを消去"):
+            if st.button("🗑️ 履歴消去"):
                 st.session_state['patient_db'][current_patient_id] = []
                 st.rerun()
-    else:
-        st.warning("⚠️ IDを入力してください")
-        current_patient_id = None
 
 # ==========================================
 # 4. メイン画面
 # ==========================================
 st.title(f"👨‍⚕️ {APP_TITLE}")
 
-if current_patient_id is None:
+if not current_patient_id:
     st.stop()
 
 st.caption(f"Patient ID: **{current_patient_id}**")
 
-tab1, tab2 = st.tabs(["📝 総合診断 (Crossover Analysis)", "📈 トレンド管理 (Trends)"])
+tab1, tab2 = st.tabs(["📝 総合診断 (Crossover)", "📈 トレンド管理"])
 
 # ------------------------------------------------
-# TAB 2: トレンド管理 (グラフ修正版)
+# TAB 2: トレンド管理
 # ------------------------------------------------
 with tab2:
-    st.info("数値入力 (必要な項目のみ)")
+    st.info("数値入力")
     c1, c2, c3 = st.columns(3)
     pao2 = c1.number_input("PaO2", step=1.0, value=None, key="n_pao2")
     fio2 = c1.number_input("FiO2", step=1.0, value=None, key="n_fio2")
@@ -141,122 +147,87 @@ with tab2:
     ph = c3.number_input("pH", step=0.01, value=None, key="n_ph")
     svo2 = c3.number_input("SvO2", step=1.0, value=None, key="n_svo2")
 
-    # 計算ロジック
     pf, do2, o2er = None, None, None
-    if pao2 is not None and fio2 is not None and fio2 > 0:
-        pf = pao2 / (fio2/100)
-    if hb is not None and co is not None and spo2 is not None and pao2 is not None:
+    if pao2 and fio2 and fio2>0: pf = pao2 / (fio2/100)
+    if hb and co and spo2 and pao2:
         cao2 = 1.34*hb*(spo2/100) + 0.0031*pao2
         do2 = co*cao2*10
-        if svo2 is not None:
+        if svo2:
             cvo2 = 1.34*hb*(svo2/100) + 0.0031*40
             vo2 = co*(cao2-cvo2)*10
-            if do2 is not None and do2 > 0:
-                o2er = (vo2/do2)*100
+            if do2 and do2>0: o2er = (vo2/do2)*100
     
-    # プレビュー
     cols = st.columns(3)
-    if pf is not None: cols[0].metric("P/F", f"{pf:.0f}")
-    if do2 is not None: cols[1].metric("DO2", f"{do2:.0f}")
-    if o2er is not None: cols[2].metric("O2ER", f"{o2er:.1f}%")
+    if pf: cols[0].metric("P/F", f"{pf:.0f}")
+    if do2: cols[1].metric("DO2", f"{do2:.0f}")
+    if o2er: cols[2].metric("O2ER", f"{o2er:.1f}%")
 
-    # 記録ボタン
     if st.button("💾 記録"):
-        if current_patient_id not in st.session_state['patient_db']: 
-            st.session_state['patient_db'][current_patient_id] = []
-        
-        # タイムスタンプと共に保存
+        if current_patient_id not in st.session_state['patient_db']: st.session_state['patient_db'][current_patient_id] = []
+        # 数値化して保存
         st.session_state['patient_db'][current_patient_id].append({
-            "Time": datetime.now().strftime("%H:%M:%S"),
-            "P/F": pf, 
-            "DO2": do2, 
-            "O2ER": o2er,
-            "Lactate": lac, # 乳酸もグラフ用に追加
-            "Hb": hb        # Hbもグラフ用に追加
+            "Time": datetime.now().strftime("%H:%M:%S"), 
+            "P/F": pf, "DO2": do2, "O2ER": o2er, "Lactate": lac, "Hb": hb
         })
         st.rerun()
     
-    # グラフ描画（ここを修正しました！）
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
-        
-        # ★修正ポイント: 全てのデータを強制的に「数値」に変換する
-        # これをやらないと、Noneが混じった時にグラフが壊れます
-        numeric_cols = ["P/F", "DO2", "O2ER", "Lactate", "Hb"]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-
-        st.markdown("##### 呼吸・代謝 (P/F, O2ER, Lac)")
+        # 強制数値変換（グラフ破損防止）
+        for col in ["P/F", "DO2", "O2ER", "Lactate", "Hb"]:
+            if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
         st.line_chart(df.set_index("Time")[["P/F", "O2ER", "Lactate"]])
-        
-        st.markdown("##### 循環 (DO2, Hb)")
-        st.line_chart(df.set_index("Time")[["DO2", "Hb"]])
 
 # ------------------------------------------------
-# TAB 1: 総合診断 (クロスオーバー機能搭載)
+# TAB 1: 総合診断 (実行時ツール渡し)
 # ------------------------------------------------
 with tab1:
-    st.markdown("#### 💬 Multimodal Clinical Assessment")
-    st.markdown("Tab2で記録された数値トレンドと、ここに入力する病歴情報を**統合して**解析します。")
-    
-    col_d1, col_d2 = st.columns([1, 1])
-    with col_d1:
-        history_text = st.text_area("病歴・主訴・現病歴", height=200, placeholder="例: 慢性腎不全で透析中。3日前から黒色便あり...")
-        lab_text_paste = st.text_area("追加の検査データ (Labs Paste)", height=200, placeholder="WBC 12000, CRP 15.0...")
-    with col_d2:
-        uploaded_files = st.file_uploader("画像資料 (Drop Here)", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
-        if uploaded_files:
-            st.image(uploaded_files, caption=[f.name for f in uploaded_files], width=150)
+    col1, col2 = st.columns(2)
+    hist_text = col1.text_area("病歴")
+    lab_text = col1.text_area("検査データ")
+    up_file = col2.file_uploader("画像", accept_multiple_files=True)
 
-    st.markdown("---")
-    if st.button("🔍 草野次長に統合診断を依頼", type="primary"):
+    if st.button("🔍 診断実行 (検索付き)"):
         if not api_key:
-            st.error("APIキーを入力してください。")
+            st.error("APIキーを入れてください！")
         else:
-            # --- ここがクロスオーバーの核 ---
-            # 1. Tab2のトレンドデータを取得
-            trend_data_str = "（トレンドデータなし）"
-            trend_history = st.session_state['patient_db'].get(current_patient_id, [])
+            trend_str = "（トレンドデータなし）"
+            hist = st.session_state['patient_db'].get(current_patient_id, [])
+            if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
             
-            if trend_history:
-                # 直近5件のデータを抽出して文字列化
-                df_trend = pd.DataFrame(trend_history)
-                recent_trend = df_trend.tail(5) 
-                # AIが読みやすい形式に変換 (Markdown Table)
-                trend_data_str = recent_trend.to_markdown(index=False)
-            
-            # 2. プロンプトに全情報を統合
             prompt_text = f"""
-            以下の患者情報を【統合的に】分析してください。
-            特に、Tab2のトレンドデータの変化が、Tab1の病歴（既往歴）で説明できるものか、新規の病態かを鑑別してください。
-
-            【Tab 1: 病歴・背景情報】
-            {history_text if history_text else "記載なし"}
-            
-            【Tab 1: 追加検査データ】
-            {lab_text_paste if lab_text_paste else "記載なし"}
-
-            【Tab 2: 時系列トレンドデータ (直近5点)】
-            {trend_data_str}
+            以下の情報を【統合的に】分析してください。
+            Tab2のトレンド変化が、既往歴で説明できるか、新規病態かを鑑別してください。
+            【Tab 1: 病歴】{hist_text}
+            【Tab 1: 検査】{lab_text}
+            【Tab 2: トレンド(直近5点)】{trend_str}
             """
-            
-            user_content = [prompt_text]
-            if uploaded_files:
-                for f in uploaded_files:
-                    img = Image.open(f)
-                    user_content.append(img)
-            
-            tools = [{"google_search": {}}]
+            content = [prompt_text]
+            if up_file:
+                for f in up_file: content.append(Image.open(f))
+
             try:
-                model = genai.GenerativeModel(model_name=selected_model_name, tools=tools, system_instruction=KUSANO_BRAIN)
-                with st.spinner("Tab1の病歴とTab2のトレンドを照合中..."):
-                    response = model.generate_content(user_content)
-                st.markdown("### 👨‍⚕️ Integrated Assessment Result")
-                st.write(response.text)
-                if response.candidates[0].grounding_metadata.search_entry_point:
-                    st.caption("🌐 Referenced Sources")
-                    st.write(response.candidates[0].grounding_metadata.search_entry_point.rendered_content)
+                # 1. モデル作成（ここではツールを渡さない）
+                model = genai.GenerativeModel("gemini-1.5-pro", system_instruction=KUSANO_BRAIN)
+                
+                with st.spinner("思考中... (Google検索で裏付けを確認中)"):
+                    # 2. 実行時にツールを渡す（エラー回避）
+                    res = model.generate_content(
+                        content,
+                        tools=[{"google_search": {}}]
+                    )
+                
+                st.markdown("### 👨‍⚕️ Assessment Result")
+                st.write(res.text)
+                
+                if res.candidates[0].grounding_metadata.search_entry_point:
+                    st.success("✅ 文献・ガイドラインを参照しました")
+                    st.write(res.candidates[0].grounding_metadata.search_entry_point.rendered_content)
+                else:
+                    st.info("※今回は内部知識のみで回答しました")
+
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"エラー発生: {e}")
+                if "Unknown field" in str(e):
+                    st.error("⚠️ サーバーのバージョン不整合です。New appを作り直すと直ります。")
