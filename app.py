@@ -2,24 +2,28 @@ import os
 import sys
 import subprocess
 import time
+import streamlit as st # 先にstだけインポートして進捗を表示
 
-# ---------------------------------------------------------
-# ★最終奥義: 実行中に強制的に最新版をインストールする
-# ---------------------------------------------------------
-try:
-    # まずインストールを試みる
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
-    import google.generativeai as genai
-except Exception as e:
-    # 失敗したらエラーを表示して停止（何が起きたかわかるように）
-    import streamlit as st
-    st.error(f"致命的なインストールエラー: {e}")
-    st.stop()
+# ==========================================
+# ★ゾンビプロセス破壊 & 強制インストール
+# ==========================================
+# 起動時に一度だけ実行するためのキャッシュ処理
+@st.cache_resource
+def force_install_libraries():
+    try:
+        # 1. まず古いものを強制削除
+        subprocess.check_call([sys.executable, "-m", "pip", "uninstall", "-y", "google-generativeai"])
+        # 2. キャッシュを使わずに最新版を強制インストール
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--no-cache-dir", "--force-reinstall", "google-generativeai==0.8.3"])
+        return True
+    except Exception as e:
+        return False
 
-# ---------------------------------------------------------
-# 通常のライブラリ
-# ---------------------------------------------------------
-import streamlit as st
+# インストール実行
+force_install_libraries()
+
+# インストール後に改めてインポート
+import google.generativeai as genai
 import pandas as pd
 from PIL import Image
 import re
@@ -55,17 +59,17 @@ KUSANO_BRAIN = """
 あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」です。
 提供された情報を統合し、論理的に診断推論を行ってください。
 
-【絶対ルール】
+【Check!! 絶対ルール】
 あなたはAIであり、ハルシネーション（事実に基づかない回答）を起こすリスクがあります。
 **必ず「Google検索ツール」を使用して裏付けを取り、事実に基づいた回答のみを行ってください。**
-もし検索機能がエラーで使えない場合は、推測で回答せず、正直に「エラーのため回答できません」と伝えてください。
+もし検索機能がエラーで使えない場合は、決して推測で回答せず、正直に「システムエラーのため回答できません」と伝えてください。
 
 【情報の格付け】
 - 推奨: .go.jp, .ac.jp, .or.jp (公的機関・学会)
 - 注意: 個人ブログ、まとめサイト (原則除外)
 
 【回答フォーマット】
-1. **Clinical Summary**: 患者の状態要約
+1. **Clinical Summary**: 状態要約
 2. **Integrated Assessment**: 病歴×数値トレンドの統合見解
 3. **Evidence**: 根拠とした文献と信頼度
 4. **Plan**: 推奨アクション
@@ -82,8 +86,12 @@ current_patient_id = None
 with st.sidebar:
     st.title("⚙️ System Config")
     
-    # バージョン確認 (0.8.3と表示されれば勝ち)
-    st.caption(f"GenAI Lib: {genai.__version__}")
+    # バージョン確認 (0.8.3なら勝利)
+    ver_str = getattr(genai, "__version__", "Unknown")
+    st.caption(f"GenAI Lib: {ver_str}")
+    
+    if ver_str < "0.8.3":
+        st.error("⚠️ アップデート失敗。Rerunしてください。")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -104,7 +112,6 @@ with st.sidebar:
             current_patient_id = patient_id_input.upper()
             st.success(f"Login: {current_patient_id}")
             
-            # 保存・読込
             current_data = st.session_state['patient_db'].get(current_patient_id, [])
             if current_data:
                 json_str = json.dumps(current_data, indent=2, default=str)
@@ -169,7 +176,6 @@ with tab2:
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
-        # ★グラフ用データ整形（数値化）
         for col in ["P/F", "DO2", "O2ER", "Lactate", "Hb"]:
             if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
         
@@ -181,7 +187,7 @@ with tab2:
             st.markdown("##### 循環")
             st.line_chart(df.set_index("Time")[["DO2", "Hb"]])
 
-# === TAB 1: 診断 (検索実行・エラー完全対応) ===
+# === TAB 1: 診断 (絶対検索・エラー即停止) ===
 with tab1:
     col1, col2 = st.columns(2)
     hist_text = col1.text_area("病歴")
@@ -201,11 +207,11 @@ with tab1:
                 for f in up_file: content.append(Image.open(f))
 
             try:
-                # 1. モデル作成（ここではツールを渡さない！これ重要）
+                # 1. モデル作成 (ツールなし)
                 model = genai.GenerativeModel("gemini-1.5-pro", system_instruction=KUSANO_BRAIN)
                 
-                with st.spinner("思考中... (強制アップデート＆Google検索)"):
-                    # 2. 実行時にツールを渡す（これが最新の書き方）
+                with st.spinner("思考中... (Google検索で裏付け確認中)"):
+                    # 2. ツールを渡して実行
                     res = model.generate_content(
                         content,
                         tools=[{"google_search": {}}]
@@ -214,12 +220,11 @@ with tab1:
                 st.markdown("### 👨‍⚕️ Assessment Result")
                 st.write(res.text)
                 
-                # 参照元表示
                 if res.candidates[0].grounding_metadata.search_entry_point:
                     st.success("✅ 文献・ガイドラインを参照しました")
                     st.write(res.candidates[0].grounding_metadata.search_entry_point.rendered_content)
                 else:
-                    st.warning("⚠️ 検索結果が得られませんでした。")
+                    st.warning("⚠️ 検索を行いましたが、ヒットしませんでした。")
 
             except Exception as e:
                 st.error("❌ 検索機能エラー")
