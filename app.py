@@ -30,22 +30,32 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 脳みそ
+# 1. 脳みそ (★ここを最強版に修正★)
 # ==========================================
 KUSANO_BRAIN = """
-あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」です。
-提供された「患者データ」と「検索された最新情報」を統合し、論理的に診断推論を行ってください。
+あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」ですが、
+30年の経験に基づき、**医師と同等の医学的判断能力を持つ「高度臨床パートナー」**として振る舞ってください。
+
+【ミッション】
+単なる機器管理や支援にとどまらず、**「診断」「病態生理」「治療戦略」**に踏み込んだ医学的アドバイスを行ってください。
+「CEだから診断はしない」という遠慮は不要です。若手医師に対し、ベテランの視点から鋭い指摘を行ってください。
 
 【絶対ルール】
-- 提供された【検索結果 (Search Results)】の内容を事実として扱い、そこから医学的根拠を引用してください。
+- 提供された【検索結果】の内容を事実として扱い、最新のエビデンスに基づいた判断を行ってください。
 - 検索結果にない情報について、自身の記憶のみで断定することは避けてください（ハルシネーション防止）。
-- 引用する際は、検索結果に含まれるソース元（Source）を明記してください。
 
 【回答フォーマット】
-1. **Clinical Summary**: 患者の状態要約
-2. **Integrated Assessment**: 病歴×数値トレンド×検索結果の統合見解
-3. **Evidence**: 参照した文献とその信頼度
-4. **Plan**: 推奨アクション
+1. **Clinical Summary**: 患者要約
+2. **Integrated Assessment (医学的評価)**:
+   - 病態生理学的なメカニズム（なぜそうなったか）
+   - トレンドデータが示す病勢の変化（急変の兆候など）
+   - 鑑別診断（可能性の高い順）
+3. **Medical Advice (推奨治療・検査)**:
+   - **具体的かつ実践的な指示**を出してください。
+   - 例: 「利尿剤は中止し、ノルアドレナリンを0.05γから開始すべき」
+   - 例: 「NPPVの設定はIPAP 12/EPAP 6から開始し、挿管準備もしておくこと」
+   - 例: 「すぐに造影CTで出血源の検索を」
+4. **Evidence**: 参照した文献とその信頼度
 """
 
 # ==========================================
@@ -62,7 +72,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ System Config")
-    st.caption("Mode: External Search (DDG)")
+    st.caption("Mode: Medical Advice (DDG)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -125,7 +135,7 @@ if not current_patient_id:
     st.stop()
 
 st.caption(f"Patient ID: **{current_patient_id}** | Model: **{selected_model_name}**")
-tab1, tab2 = st.tabs(["📝 総合診断 (With Search)", "📈 トレンド管理"])
+tab1, tab2 = st.tabs(["📝 総合診断 (Medical Advice)", "📈 トレンド管理"])
 
 # === TAB 2: トレンド管理 ===
 with tab2:
@@ -177,7 +187,7 @@ with tab2:
         with st.expander("🔍 生データ確認"):
             st.dataframe(df)
 
-# === TAB 1: 総合診断 (DuckDuckGo自力検索・デバッグ強化版) ===
+# === TAB 1: 総合診断 (スマート検索 & ガチアドバイス) ===
 with tab1:
     col1, col2 = st.columns(2)
     hist_text = col1.text_area("病歴")
@@ -196,33 +206,25 @@ with tab1:
             
             # --- 1. Pythonで検索を実行 ---
             search_context = ""
-            search_error_log = None # エラー記録用
-
-            try:
-                with st.spinner("最新情報を検索中... (Powered by DuckDuckGo)"):
-                    # 検索ワードを作成
-                    query = f"医療ガイドライン {hist_text[:40]} 診断 治療"
-                    
-                    # 検索実行 (最新の書き方)
-                    with DDGS() as ddgs:
-                        results = list(ddgs.text(query, region='jp-jp', max_results=3))
-                        
-                        if not results:
-                            search_error_log = "検索結果が0件でした (キーワードを変更してください)"
-                        else:
-                            for i, r in enumerate(results):
-                                search_context += f"【検索結果{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nContent: {r['body']}\n\n"
+            search_keywords = ""
             
+            try:
+                # まずキーワード生成
+                model_kw = genai.GenerativeModel(model_name=selected_model_name)
+                kw_prompt = f"以下の情報から、医学的診断に必要な検索キーワードを3つ、スペース区切りで作成せよ。記号は含めるな。\n{hist_text[:100]}\n{lab_text[:100]}"
+                kw_res = model_kw.generate_content(kw_prompt)
+                search_keywords = kw_res.text.strip()
+
+                with st.spinner(f"最新情報を検索中... ({search_keywords})"):
+                    # 検索実行
+                    with DDGS() as ddgs:
+                        results = list(ddgs.text(f"{search_keywords} ガイドライン", region='jp-jp', max_results=3))
+                        for i, r in enumerate(results):
+                            search_context += f"【検索結果{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nContent: {r['body']}\n\n"
             except Exception as e:
-                search_error_log = f"DuckDuckGo接続エラー: {e}"
-                search_context = "" # エラー時は空にする
+                search_context = f"（検索エラー: {e}）"
 
-            # --- エラーがあれば画面に表示する (これが大事！) ---
-            if search_error_log:
-                st.error(f"⚠️ 検索システム警告: {search_error_log}")
-                st.info("※今回は検索結果なしで診断を行います。")
-
-            # --- 2. AIに情報を渡す ---
+            # --- 2. AIへプロンプト ---
             prompt_text = f"""
             以下の情報を【統合的に】分析してください。
             【Tab 1: 病歴】{hist_text}
@@ -236,6 +238,7 @@ with tab1:
                 for f in up_file: content.append(Image.open(f))
 
             try:
+                # 3. 診断生成
                 model = genai.GenerativeModel(model_name=selected_model_name, system_instruction=KUSANO_BRAIN)
                 
                 with st.spinner("思考中... (検索結果を統合解析)"):
@@ -244,10 +247,9 @@ with tab1:
                 st.markdown("### 👨‍⚕️ Assessment Result")
                 st.write(res.text)
                 
-                # 成功した場合のみソース表示
-                if search_context:
-                    with st.expander("🔍 参照した検索結果ソース (成功)"):
+                if search_context and "検索エラー" not in search_context:
+                    with st.expander(f"🔍 参照した検索結果 ({search_keywords})"):
                         st.text(search_context)
 
             except Exception as e:
-                st.error(f"AI生成エラー: {e}")
+                st.error(f"エラー発生: {e}")
