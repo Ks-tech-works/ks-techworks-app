@@ -1,6 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 from duckduckgo_search import DDGS
+import time # ★休憩用
 
 # ==========================================
 # 0. アプリ設定
@@ -17,11 +18,11 @@ st.markdown(f"""
     }}
     .block-container {{ padding-bottom: 80px; }}
     </style>
-    <div class="footer">K's Research Assistant | Multi-Search Mode</div>
+    <div class="footer">K's Research Assistant | Robust Mode</div>
     """, unsafe_allow_html=True)
 
 st.title("🎓 K's Research Assistant")
-st.caption("複合検索＆多角的分析システム")
+st.caption("複合検索＆多角的分析システム (ブロック回避版)")
 
 # ==========================================
 # 1. サイドバー
@@ -74,7 +75,7 @@ with col2:
     )
 
 # ==========================================
-# 3. 分析ロジック (マルチ検索実装)
+# 3. 分析ロジック (堅牢化版)
 # ==========================================
 if st.button("🚀 マルチ検索 & 分析開始", type="primary"):
     if not api_key or not my_theme or not search_query:
@@ -87,7 +88,7 @@ if st.button("🚀 マルチ検索 & 分析開始", type="primary"):
         try:
             model_kw = genai.GenerativeModel(selected_model_name)
             
-            with st.spinner("検索戦略を立案中... (3つの視点でクエリ生成)"):
+            with st.spinner("検索戦略を立案中..."):
                 kw_prompt = f"""
                 あなたは専門リサーチャーです。
                 ユーザーの研究テーマを調査するために、検索エンジン(DuckDuckGo)で検索すべき「3つの異なる切り口」の検索クエリを作成してください。
@@ -104,16 +105,14 @@ if st.button("🚀 マルチ検索 & 分析開始", type="primary"):
                 3. 出力形式は、3行のテキストのみ（番号や解説は不要）。
 
                 例:
-                車載 DC-ACインバータ 正弦波 医療機器 適合
-                人工呼吸器 動作電圧範囲 許容変動 JIS
-                災害時 在宅人工呼吸療法 電源確保 ガイドライン
+                車載 DC-ACインバータ 正弦波 医療機器
+                人工呼吸器 動作電圧範囲 許容変動
+                災害時 在宅人工呼吸療法 電源確保
                 """
                 kw_res = model_kw.generate_content(kw_prompt)
-                # 行ごとに分割してリスト化
                 raw_queries = kw_res.text.strip().split('\n')
                 queries = [q.strip() for q in raw_queries if q.strip()]
                 
-                # 画面に表示
                 st.info("🗝️ **生成された検索戦略:**")
                 for q in queries:
                     st.write(f"- `{q}`")
@@ -122,37 +121,62 @@ if st.button("🚀 マルチ検索 & 分析開始", type="primary"):
             st.error(f"キーワード生成エラー: {e}")
             st.stop()
 
-        # --- B. DuckDuckGoでマルチ検索 ---
+        # --- B. DuckDuckGoでマルチ検索 (ブロック回避ロジック) ---
         search_results_text = ""
-        unique_urls = set() # 重複排除用
+        unique_urls = set()
 
         try:
-            with DDGS() as ddgs:
-                progress_bar = st.progress(0)
-                
-                for i, query in enumerate(queries):
-                    with st.spinner(f"検索実行中 ({i+1}/{len(queries)}): {query}"):
-                        # 各クエリで3件ずつ検索
-                        results = list(ddgs.text(query, region='jp-jp', max_results=3))
+            progress_bar = st.progress(0)
+            
+            # セッションを都度作り直すことでブロックを回避
+            for i, query in enumerate(queries):
+                with st.spinner(f"検索実行中 ({i+1}/{len(queries)}): {query}"):
+                    try:
+                        # 2秒待機 (重要！これでブロックを防ぐ)
+                        time.sleep(2)
                         
-                        for r in results:
-                            if r['href'] not in unique_urls: # URL重複チェック
-                                unique_urls.add(r['href'])
-                                search_results_text += f"【文献】\nTitle: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
-                    
-                    progress_bar.progress((i + 1) / len(queries))
+                        with DDGS() as ddgs:
+                            # まず日本限定でトライ
+                            results = list(ddgs.text(query, region='jp-jp', max_results=3))
+                            
+                            # 0件なら地域制限を外して再トライ
+                            if not results:
+                                time.sleep(1)
+                                results = list(ddgs.text(query, region=None, max_results=3))
+
+                            for r in results:
+                                if r['href'] not in unique_urls:
+                                    unique_urls.add(r['href'])
+                                    search_results_text += f"【文献】\nTitle: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
+                    except Exception as loop_e:
+                        st.warning(f"クエリ「{query}」でエラー: {loop_e}")
+                        continue
                 
-                progress_bar.empty()
+                progress_bar.progress((i + 1) / len(queries))
+            
+            progress_bar.empty()
 
         except Exception as e:
             st.error(f"検索エンジンエラー: {e}")
-            # エラーでも検索結果が少しでもあれば続行
+
+        # --- C. 最後の砦 (それでも0件ならバックアップ検索) ---
+        if not search_results_text:
+            st.warning("詳細検索でヒットしませんでした。簡易検索を実行します...")
+            try:
+                time.sleep(2)
+                with DDGS() as ddgs:
+                    # 非常にシンプルなワードで再検索
+                    simple_q = f"{search_query[:15]} 論文"
+                    results = list(ddgs.text(simple_q, region='jp-jp', max_results=3))
+                    for r in results:
+                        search_results_text += f"【文献(簡易)】\nTitle: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
+            except: pass
 
         if not search_results_text:
-            st.error("有効な情報が見つかりませんでした。テーマを少し具体的に書き直してみてください。")
+            st.error("有効な情報が見つかりませんでした。時間を置いて試すか、キーワードを短くしてみてください。")
             st.stop()
 
-        # --- C. Geminiで分析 (RAG) ---
+        # --- D. Geminiで分析 (RAG) ---
         prompt = f"""
         あなたは優秀な大学院生の研究パートナー（Ph.D.候補生レベル）です。
         以下の「複数の検索結果」を統合し、「ユーザーの研究テーマ」に対する有用性を分析してください。
