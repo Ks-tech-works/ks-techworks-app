@@ -1,5 +1,6 @@
 streamlit
 google-generativeai
 pandas
-duckduckgo-search>=6.1.0
+duckduckgo-search>=6.1.5
 tabulate
+watchdog
