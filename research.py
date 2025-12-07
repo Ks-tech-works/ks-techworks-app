@@ -3,6 +3,7 @@ import google.generativeai as genai
 from duckduckgo_search import DDGS
 import time
 import random
+import re
 
 # ==========================================
 # 0. アプリ設定
@@ -19,11 +20,11 @@ st.markdown(f"""
     }}
     .block-container {{ padding-bottom: 80px; }}
     </style>
-    <div class="footer">K's Research Assistant | Recovery Mode</div>
+    <div class="footer">K's Research Assistant | Silent Search Mode</div>
     """, unsafe_allow_html=True)
 
 st.title("🎓 K's Research Assistant")
-st.caption("研究・論文検索支援システム (検索強化版)")
+st.caption("研究・論文検索支援システム (AI無駄話カット版)")
 
 # ==========================================
 # 1. サイドバー
@@ -74,8 +75,27 @@ with col2:
         value="・車載インバータの変換効率と医療機器への適合性\n・人工呼吸器の許容電圧範囲\n・吸引機の起動時サージ電力\n・災害時電源確保のガイドライン"
     )
 
+# --- 掃除用関数 ---
+def clean_queries(raw_text):
+    """AIが喋った余計な言葉を削除して、純粋な検索ワードだけリストにする"""
+    lines = raw_text.strip().split('\n')
+    clean_list = []
+    for line in lines:
+        # 余計な記号や挨拶を消す
+        line = re.sub(r'^[0-9]+\.\s*', '', line) # "1. " を消す
+        line = re.sub(r'^-\s*', '', line)       # "- " を消す
+        line = line.strip()
+        
+        # 明らかに検索ワードじゃない行（挨拶など）はスキップ
+        if not line: continue
+        if "承知" in line or "検索ワード" in line or "以下の" in line or "切り口" in line:
+            continue
+        
+        clean_list.append(line)
+    return clean_list[:3] # 最大3つまで
+
 # ==========================================
-# 3. 分析ロジック (リカバリー検索実装)
+# 3. 分析ロジック
 # ==========================================
 if st.button("🚀 検索 & 分析開始", type="primary"):
     if not api_key or not my_theme or not search_query:
@@ -89,61 +109,72 @@ if st.button("🚀 検索 & 分析開始", type="primary"):
         try:
             model_kw = genai.GenerativeModel(selected_model_name)
             
-            # --- Phase 1: 精密検索 (3つの専門的クエリ) ---
-            with st.spinner("検索戦略を立案中... (Phase 1)"):
+            # --- Phase 1: 精密検索 ---
+            with st.spinner("検索戦略を立案中..."):
                 kw_prompt = f"""
-                ユーザーの研究テーマを調査するため、DuckDuckGoで検索する「3つの異なる切り口」の検索クエリを作成してください。
+                ユーザーの研究テーマを調査するため、DuckDuckGoで検索する「3つの検索クエリ」を作成せよ。
                 【テーマ】{my_theme}
                 【詳細】{search_query}
-                【条件】3〜4単語の専門用語の羅列。
-                例: 車載DC-ACインバータ 医療機器 適合
+                
+                【絶対命令】
+                - 挨拶や解説は一切不要。
+                - 3行のテキストのみを出力すること。
+                - 1行につき1つの検索クエリを書くこと。
+                - 専門用語の羅列にすること（助詞は省く）。
+
+                出力例:
+                車載DC-ACインバータ 医療機器 適合性
+                人工呼吸器 動作電圧範囲 JIS規格
+                災害時 在宅人工呼吸療法 電源 マニュアル
                 """
                 kw_res = model_kw.generate_content(kw_prompt)
-                queries = [q.strip() for q in kw_res.text.strip().split('\n') if q.strip()]
-                st.info(f"🗝️ 戦略: {queries}")
+                
+                # ★ここでAIの無駄話をカット！
+                queries = clean_queries(kw_res.text)
+                
+                st.info(f"🗝️ 実行する検索: {queries}")
 
             # 検索実行
+            if not queries:
+                st.warning("キーワード生成に失敗しました。バックアップ検索を行います。")
+                queries = [f"{my_theme[:10]} 論文"]
+
             with DDGS() as ddgs:
-                for q in queries:
-                    with st.spinner(f"検索中: {q}"):
-                        time.sleep(random.uniform(1.5, 3.0)) # ランダムな休憩でブロック回避
+                progress_bar = st.progress(0)
+                for i, q in enumerate(queries):
+                    with st.spinner(f"検索中 ({i+1}/{len(queries)}): {q}"):
+                        time.sleep(random.uniform(1.0, 2.0)) # 休憩
+                        # 日本限定で検索
                         res = list(ddgs.text(q, region='jp-jp', max_results=2))
+                        
+                        # 0件なら世界検索
+                        if not res:
+                            res = list(ddgs.text(q, region=None, max_results=2))
+
                         for r in res:
                             if r['href'] not in unique_urls:
                                 unique_urls.add(r['href'])
                                 search_results_text += f"Title: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
+                    progress_bar.progress((i + 1) / len(queries))
+                progress_bar.empty()
 
-            # --- Phase 2: リカバリー検索 (もし0件なら) ---
+            # --- Phase 2: リカバリー (それでも0件なら) ---
             if not search_results_text:
-                st.warning("⚠️ 詳細検索でヒットしませんでした。キーワードを単純化して再試行します...")
+                st.warning("⚠️ 詳細検索ヒットなし。キーワードを単純化して再試行...")
+                simple_q = "災害医療 電源確保 ガイドライン" # 固定の安全策
                 
-                with st.spinner("検索ワードを再調整中... (Phase 2)"):
-                    # AIに「もっと簡単なワード」を考えさせる
-                    retry_prompt = f"""
-                    先ほどの検索で結果が0件でした。
-                    もっと一般的でヒットしやすい「広義の検索ワード」を1つだけ作成してください。
-                    【テーマ】{my_theme}
-                    例: 災害医療 電源確保 ガイドライン
-                    """
-                    retry_res = model_kw.generate_content(retry_prompt)
-                    simple_query = retry_res.text.strip()
-                    st.info(f"🗝️ リカバリー検索: {simple_query}")
-                
-                # 再検索実行
-                with st.spinner(f"再検索中: {simple_query}"):
-                    time.sleep(2)
+                with st.spinner(f"再検索中: {simple_q}"):
                     with DDGS() as ddgs:
-                        # 地域制限を外して広く探す
-                        res = list(ddgs.text(simple_query, region=None, max_results=3))
+                        res = list(ddgs.text(simple_q, region='jp-jp', max_results=3))
                         for r in res:
                             search_results_text += f"Title: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
 
         except Exception as e:
-            st.error(f"検索エラー: {e}")
+            st.error(f"検索プロセスエラー: {e}")
 
         # --- 最終判定 ---
         if not search_results_text:
-            st.error("❌ 検索結果が見つかりませんでした。入力内容（テーマ）を少し変更してみてください。")
+            st.error("❌ 検索結果が見つかりませんでした。")
             st.stop()
 
         # --- C. Geminiで分析 ---
