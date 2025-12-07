@@ -8,11 +8,13 @@ from duckduckgo_search import DDGS
 st.set_page_config(page_title="K's Research Assistant", layout="wide", page_icon="🎓")
 
 st.title("🎓 K's Research Assistant")
-st.caption("Literature Search & Relevance Analysis | Powered by Gemini 1.5 Pro")
+st.caption("Literature Search & Relevance Analysis | Powered by Gemini")
 
 # ==========================================
-# 1. サイドバー (設定)
+# 1. サイドバー (設定 & モデル選択)
 # ==========================================
+selected_model_name = None
+
 with st.sidebar:
     st.header("⚙️ 設定")
     try:
@@ -27,6 +29,19 @@ with st.sidebar:
 
     if api_key:
         genai.configure(api_key=api_key)
+        
+        # ★ここが修正ポイント：使えるモデルを自動取得
+        try:
+            model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            # Proモデルを優先的に探す
+            default_index = 0
+            for i, m_name in enumerate(model_list):
+                if "gemini-1.5-pro" in m_name:
+                    default_index = i
+                    break
+            selected_model_name = st.selectbox("使用するAIモデル", model_list, index=default_index)
+        except Exception as e:
+            st.error(f"モデルリスト取得エラー: {e}")
 
 # ==========================================
 # 2. メイン入力エリア
@@ -53,16 +68,20 @@ with col2:
 # 3. 分析ロジック (AI脳)
 # ==========================================
 if st.button("🚀 文献検索 & 関連性分析", type="primary"):
-    if not api_key or not my_theme or not search_query:
-        st.error("APIキー、研究テーマ、検索ワードのすべてを入力してください。")
+    if not api_key:
+        st.error("APIキーが設定されていません。")
+    elif not selected_model_name:
+        st.error("AIモデルが選択されていません。サイドバーを確認してください。")
+    elif not my_theme or not search_query:
+        st.error("研究テーマと検索ワードを入力してください。")
     else:
         # --- A. DuckDuckGoで検索 ---
         search_results = ""
         try:
             with st.spinner(f"文献・情報を検索中... ({search_query})"):
                 with DDGS() as ddgs:
-                    # 学術的な情報を優先するため "論文" "report" などを裏で足しても良い
-                    results = list(ddgs.text(f"{search_query}", region='jp-jp', max_results=5))
+                    # 学術的な情報を優先するため "論文" "report" などを裏で足す
+                    results = list(ddgs.text(f"{search_query} 論文 レポート", region='jp-jp', max_results=5))
                     for i, r in enumerate(results):
                         search_results += f"【文献{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
         except Exception as e:
@@ -104,7 +123,9 @@ if st.button("🚀 文献検索 & 関連性分析", type="primary"):
         """
 
         try:
-            model = genai.GenerativeModel("gemini-1.5-pro")
+            # ★ここを修正：指定されたモデル名を使う
+            model = genai.GenerativeModel(selected_model_name)
+            
             with st.spinner("論文と研究テーマを照合中..."):
                 response = model.generate_content(prompt)
             
