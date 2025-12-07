@@ -18,7 +18,7 @@ st.markdown(f"""
     }}
     .block-container {{ padding-bottom: 80px; }}
     </style>
-    <div class="footer">K's Research Assistant | Simple & Robust</div>
+    <div class="footer">K's Research Assistant | High Speed Mode</div>
     """, unsafe_allow_html=True)
 
 st.title("🎓 K's Research Assistant")
@@ -44,7 +44,6 @@ with st.sidebar:
         genai.configure(api_key=api_key)
         try:
             model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            
             # Flashを優先 (連打対策)
             default_index = 0
             for i, m_name in enumerate(model_list):
@@ -83,40 +82,22 @@ if st.button("🚀 検索 & 分析開始", type="primary"):
         st.error("APIキーを入れてください")
     else:
         search_context = ""
-        search_keywords = ""
+        # Pythonで検索ワードを単純結合 (AIを使わない＝節約)
+        # 改行をスペースに変えて、末尾に「論文」などを足す
+        simple_keywords = search_query.replace("\n", " ") + " 論文 ガイドライン"
         
         try:
-            # 1. 検索ワード生成 (AI)
-            model_kw = genai.GenerativeModel(selected_model_name)
-            
-            with st.spinner("検索ワードを考案中..."):
-                # ★医療アプリと同じシンプルな指示に戻す
-                kw_prompt = f"""
-                以下の研究テーマから、検索エンジンでヒットしやすいキーワードを1行だけ作成してください。
-                【テーマ】{my_theme} {search_query}
-                
-                【条件】
-                - 3〜4単語のスペース区切り。
-                - 専門用語すぎるとヒットしないので、一般的だが核心を突く言葉を選ぶこと。
-                - 出力は検索クエリのみ。
-
-                例: 災害時 医療機器 電源確保
-                """
-                kw_res = model_kw.generate_content(kw_prompt)
-                search_keywords = kw_res.text.strip()
-                st.info(f"🗝️ 検索キーワード: **{search_keywords}**")
-
-            # 2. 検索実行 (DuckDuckGo)
-            with st.spinner(f"文献検索中..."):
+            # 1. 検索実行 (DuckDuckGo - HTMLモードでブロック回避)
+            with st.spinner(f"検索中... ({simple_keywords})"):
                 with DDGS() as ddgs:
-                    # ★backend='html' を指定 (これがブロック回避の鍵)
-                    results = list(ddgs.text(search_keywords, region='jp-jp', max_results=5, backend='html'))
+                    # 日本限定
+                    results = list(ddgs.text(simple_keywords, region='jp-jp', max_results=5, backend='html'))
                     
-                    # 0件なら世界で検索 (リカバリー)
+                    # 0件なら世界検索 (リカバリー)
                     if not results:
                         st.warning("国内で見つからなかったため、範囲を広げて再検索します...")
                         time.sleep(1)
-                        results = list(ddgs.text(search_keywords, region='wt-wt', max_results=5, backend='html'))
+                        results = list(ddgs.text(simple_keywords, region='wt-wt', max_results=5, backend='html'))
 
                     if not results:
                         st.error("❌ 検索結果が見つかりませんでした。キーワードを変更してみてください。")
@@ -129,7 +110,7 @@ if st.button("🚀 検索 & 分析開始", type="primary"):
             st.error(f"検索システムエラー: {e}")
             st.stop()
 
-        # 3. 分析実行 (AI)
+        # 2. 分析実行 (ここで初めてAIを使う)
         prompt = f"""
         あなたは優秀な大学院生の研究パートナーです。
         以下の情報を統合分析してください。
@@ -141,24 +122,18 @@ if st.button("🚀 検索 & 分析開始", type="primary"):
         【命令】
         1. 検索結果に含まれる情報を事実として扱い、研究にどう活かせるか提案してください。
         2. 検索結果がテーマとずれている場合は、その旨を指摘し、一般的な知識で補足してください。
-
-        【出力フォーマット】
-        ## 📊 文献分析レポート
-        ### 1. 検索結果の要約
-        ### 2. 研究への活用ポイント
-        - **[タイトル]**: (活用法・要約)
-        ### 3. 次のアクション提案
         """
         
         try:
             model = genai.GenerativeModel(selected_model_name)
             with st.spinner("分析中..."):
-                res = model.generate_content(prompt)
+                response = model.generate_content(prompt)
             
-            st.markdown(res.text)
+            st.markdown("### 📊 分析レポート")
+            st.write(response.text)
             
             with st.expander("📚 参照した文献ソース"):
                 st.text(search_context)
 
         except Exception as e:
-            st.error(f"AIエラー: {e}")
+            st.error(f"AIエラー (429が出たら1分待ってください): {e}")
