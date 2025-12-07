@@ -136,20 +136,38 @@ if not current_patient_id:
 st.caption(f"Patient ID: **{current_patient_id}** | Model: **{selected_model_name}**")
 tab1, tab2 = st.tabs(["📝 総合診断 (Medical Advice)", "📈 トレンド管理"])
 
-# === TAB 2: トレンド管理 ===
+# ------------------------------------------------
+# TAB 2: トレンド管理 (AG計算・補正機能追加)
+# ------------------------------------------------
 with tab2:
-    st.info("数値入力")
-    c1, c2, c3 = st.columns(3)
+    st.info("数値入力 (必要な項目のみ)")
+    
+    # --- バイタル・呼吸・循環 ---
+    st.caption("▼ バイタル・血液ガス・循環")
+    c1, c2, c3, c4 = st.columns(4)
     pao2 = c1.number_input("PaO2", step=1.0, value=None, key="n_pao2")
     fio2 = c1.number_input("FiO2", step=1.0, value=None, key="n_fio2")
-    lac = c1.number_input("Lactate", step=0.1, value=None, key="n_lac")
+    ph = c1.number_input("pH", step=0.01, value=None, key="n_ph")
+    
     hb = c2.number_input("Hb", step=0.1, value=None, key="n_hb")
     co = c2.number_input("CO", step=0.1, value=None, key="n_co")
     spo2 = c2.number_input("SpO2", step=1.0, value=None, key="n_spo2")
-    ph = c3.number_input("pH", step=0.01, value=None, key="n_ph")
+    
     svo2 = c3.number_input("SvO2", step=1.0, value=None, key="n_svo2")
+    lac = c3.number_input("Lactate", step=0.1, value=None, key="n_lac")
+    
+    # --- 電解質 (AG用) ---
+    st.caption("▼ 電解質 (AG計算用)")
+    e1, e2, e3, e4 = st.columns(4)
+    na = e1.number_input("Na", step=1.0, value=None, key="n_na")
+    cl = e2.number_input("Cl", step=1.0, value=None, key="n_cl")
+    hco3 = e3.number_input("HCO3", step=0.1, value=None, key="n_hco3")
+    alb = e4.number_input("Alb", step=0.1, value=None, key="n_alb")
 
-    pf, do2, o2er = None, None, None
+    # --- 計算ロジック ---
+    pf, do2, o2er, ag, c_ag = None, None, None, None, None
+    
+    # 1. 呼吸・循環
     if pao2 and fio2 and fio2>0: pf = pao2 / (fio2/100)
     if hb and co and spo2 and pao2:
         cao2 = 1.34*hb*(spo2/100) + 0.0031*pao2
@@ -159,29 +177,54 @@ with tab2:
             vo2 = co*(cao2-cvo2)*10
             if do2 and do2>0: o2er = (vo2/do2)*100
     
-    cols = st.columns(3)
+    # 2. AG (Anion Gap)
+    if na and cl and hco3:
+        ag = na - (cl + hco3)
+        # Alb補正: 実測AG + 2.5 * (4.0 - Alb)
+        if alb:
+            c_ag = ag + 2.5 * (4.0 - alb)
+        else:
+            c_ag = ag # Albなしなら実測のみ
+
+    # --- プレビュー表示 ---
+    cols = st.columns(4)
     if pf: cols[0].metric("P/F", f"{pf:.0f}")
     if do2: cols[1].metric("DO2", f"{do2:.0f}")
     if o2er: cols[2].metric("O2ER", f"{o2er:.1f}%")
+    if c_ag: 
+        cols[3].metric("AG (補正)", f"{c_ag:.1f}", delta=">12 High" if c_ag > 12 else None, delta_color="inverse")
+    elif ag:
+        cols[3].metric("AG (実測)", f"{ag:.1f}")
 
+    # --- 記録ボタン ---
     if st.button("💾 記録"):
         if current_patient_id not in st.session_state['patient_db']: st.session_state['patient_db'][current_patient_id] = []
-        st.session_state['patient_db'][current_patient_id].append({"Time": datetime.now().strftime("%H:%M:%S"), "P/F": pf, "DO2": do2, "O2ER": o2er, "Lactate": lac, "Hb": hb})
+        
+        # データを辞書にまとめる
+        record = {
+            "Time": datetime.now().strftime("%H:%M:%S"),
+            "P/F": pf, "DO2": do2, "O2ER": o2er, "AG": c_ag if c_ag else ag, # 補正があれば補正値を優先
+            "Lactate": lac, "Hb": hb, "pH": ph
+        }
+        st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
     
+    # --- グラフ描画 ---
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
-        for col in ["P/F", "DO2", "O2ER", "Lactate", "Hb"]:
+        # 数値化
+        target_cols = ["P/F", "DO2", "O2ER", "Lactate", "Hb", "AG", "pH"]
+        for col in target_cols:
             if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
         
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown("##### 呼吸・代謝")
+            st.markdown("##### 呼吸・代謝 (P/F, O2ER, Lac)")
             st.line_chart(df.set_index("Time")[["P/F", "O2ER", "Lactate"]])
         with g2:
-            st.markdown("##### 循環")
-            st.line_chart(df.set_index("Time")[["DO2", "Hb"]])
+            st.markdown("##### 酸塩基・循環 (AG, pH, DO2)")
+            st.line_chart(df.set_index("Time")[["AG", "pH", "DO2"]]) # AGとpHを追加
         
         with st.expander("🔍 生データ確認"):
             st.dataframe(df)
