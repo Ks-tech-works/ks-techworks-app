@@ -1,9 +1,8 @@
 import streamlit as st
 import google.generativeai as genai
+import pandas as pd
 from duckduckgo_search import DDGS
 import time
-import random
-import re
 
 # ==========================================
 # 0. アプリ設定
@@ -20,14 +19,14 @@ st.markdown(f"""
     }}
     .block-container {{ padding-bottom: 80px; }}
     </style>
-    <div class="footer">K's Research Assistant | Flash Speed Mode</div>
+    <div class="footer">K's Research Assistant | Eco Mode (Limit Bypass)</div>
     """, unsafe_allow_html=True)
 
 st.title("🎓 K's Research Assistant")
-st.caption("研究・論文検索支援システム (高速・連打対応版)")
+st.caption("研究・論文検索支援システム (クォータ制限回避版)")
 
 # ==========================================
-# 1. サイドバー (設定 & Flash優先)
+# 1. サイドバー
 # ==========================================
 selected_model_name = None
 
@@ -44,19 +43,16 @@ with st.sidebar:
 
     if api_key:
         genai.configure(api_key=api_key)
-        
-        # ★ここが修正ポイント：Flashモデルを優先的に探す
         try:
             model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            # ★ 1.5-flashを最優先 (2.5は制限がきつい場合があるため)
             default_index = 0
             for i, m_name in enumerate(model_list):
-                # "flash" が名前に含まれるものを優先選択 (429エラー回避)
                 if "gemini-1.5-flash" in m_name:
                     default_index = i
                     break
             selected_model_name = st.selectbox("使用AIモデル", model_list, index=default_index)
-        except Exception as e:
-            st.error(f"モデルリスト取得エラー: {e}")
+        except: st.error("モデルエラー")
 
 # ==========================================
 # 2. メイン入力エリア
@@ -64,130 +60,86 @@ with st.sidebar:
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.subheader("📌 研究テーマ・背景")
+    st.subheader("📌 研究テーマ")
     my_theme = st.text_area(
-        "実験の目的や前提条件",
-        height=200,
-        value="災害時停電下において、車のシガーソケット(DC12V)からインバータを介して「人工呼吸器」と「吸引機」を同時稼働させる際の安全性評価。\n特に突入電流による電圧降下で機器が停止しないかを検証したい。"
+        "研究の背景・目的",
+        height=150,
+        value="災害時停電下において、車のシガーソケット(DC12V)からインバータを介して「人工呼吸器」と「吸引機」を同時稼働させる際の安全性評価。"
     )
 
 with col2:
-    st.subheader("🔎 知りたい技術的詳細")
+    st.subheader("🔎 知りたいこと")
     search_query = st.text_area(
-        "検索したい具体的な項目",
-        height=200,
-        value="・車載インバータの変換効率と医療機器への適合性\n・人工呼吸器の許容電圧範囲\n・吸引機の起動時サージ電力\n・災害時電源確保のガイドライン"
+        "検索したいキーワード",
+        height=150,
+        value="車載インバータ 医療機器 適合性\n人工呼吸器 電圧降下\n吸引機 サージ電力"
     )
 
 # ==========================================
-# 3. 分析ロジック
+# 3. 分析ロジック (Ecoモード: AI呼び出しを1回に削減)
 # ==========================================
-if st.button("🚀 検索 & 分析開始", type="primary"):
-    if not api_key or not my_theme or not search_query:
-        st.error("入力欄をすべて埋めてください。")
-    elif not selected_model_name:
-        st.error("モデルが選択されていません。")
+if st.button("🚀 検索 & 分析開始 (Eco)", type="primary"):
+    if not api_key:
+        st.error("APIキーを入れてください")
     else:
         search_context = ""
-        search_keywords = ""
         
+        # --- 1. Pythonで検索ワードを作る (AIを使わない = 節約) ---
+        # 入力されたテキストから改行などを処理してリスト化
+        raw_keywords = search_query.replace("\n", " ").split()
+        # 最初の3単語くらいを使って検索する
+        base_keyword = " ".join(raw_keywords[:5]) 
+        
+        search_keywords = f"{base_keyword} 論文 ガイドライン" # 学術っぽくする魔法の言葉
+        st.info(f"🗝️ 自動生成キーワード: **{search_keywords}**")
+
+        # --- 2. 検索実行 (DuckDuckGo) ---
         try:
-            model_kw = genai.GenerativeModel(selected_model_name)
-            
-            # --- Try 1: 検索ワード生成 ---
-            with st.spinner("検索ワードを考案中..."):
-                kw_prompt = f"""
-                以下の研究テーマを調査するため、DuckDuckGoで検索するための「最適な検索クエリ」を1つだけ作成してください。
-                【テーマ】{my_theme}
-                【詳細】{search_query}
-                
-                【条件】
-                - 3〜5個の専門用語をスペース区切りで並べる。
-                - 助詞や記号は省く。
-                - 出力は検索クエリのみ。
-
-                例: 車載インバータ 医療機器 突入電流 災害時
-                """
-                kw_res = model_kw.generate_content(kw_prompt)
-                search_keywords = kw_res.text.strip()
-                st.info(f"🗝️ 検索キーワード: **{search_keywords}**")
-
-            # --- Try 1: 検索実行 ---
-            with st.spinner(f"文献検索中... (Try 1)"):
+            with st.spinner(f"文献検索中..."):
                 with DDGS() as ddgs:
-                    try:
-                        # 日本限定 + HTMLモードでブロック回避
-                        results = list(ddgs.text(search_keywords, region='jp-jp', max_results=5, backend='html'))
-                    except:
-                        results = []
+                    # 日本限定 + HTMLモード
+                    results = list(ddgs.text(search_keywords, region='jp-jp', max_results=5, backend='html'))
+                    
+                    if not results:
+                        st.warning("ヒットなし。範囲を広げて再検索...")
+                        time.sleep(1)
+                        results = list(ddgs.text(search_keywords, region='wt-wt', max_results=5, backend='html'))
 
-            # --- Try 2: 失敗時、AIにワードを作り直させる ---
-            if not results:
-                st.warning("⚠️ 詳細検索でヒットしませんでした。AIがキーワードを再構成します...")
-                
-                with st.spinner("検索ワードを再考中..."):
-                    retry_prompt = f"""
-                    先ほどの検索クエリ「{search_keywords}」では検索結果が0件でした。
-                    同じテーマで、よりヒットしやすい、一般的で広い意味の検索クエリを1つ作成し直してください。
-                    【条件】専門用語を少し減らし、一般的な用語にする。出力はクエリのみ。
-                    """
-                    retry_res = model_kw.generate_content(retry_prompt)
-                    retry_keywords = retry_res.text.strip()
-                    st.info(f"🗝️ 再検索ワード: **{retry_keywords}**")
+                    if not results:
+                        st.error("❌ 検索結果なし。キーワードを短くしてみてください。")
+                        st.stop()
 
-                with st.spinner(f"再検索中... (Try 2)"):
-                    time.sleep(1) # 休憩
-                    with DDGS() as ddgs:
-                        try:
-                            # 範囲を広げて再検索
-                            results = list(ddgs.text(retry_keywords, region='wt-wt', max_results=5, backend='html'))
-                        except:
-                            results = []
-
-            # --- 結果処理 ---
-            if not results:
-                st.error("❌ 検索結果が見つかりませんでした。テーマの表現を変えてみてください。")
-                st.stop()
-
-            for i, r in enumerate(results):
-                search_context += f"【文献{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
+                    for i, r in enumerate(results):
+                        search_context += f"【文献{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nBody: {r['body']}\n\n"
 
         except Exception as e:
-            st.error(f"検索システムエラー: {e}")
+            st.error(f"検索エラー: {e}")
             st.stop()
 
-        # --- 分析実行 ---
+        # --- 3. 分析実行 (ここで初めてAIを使う！) ---
+        # これで1クリックにつき1回しか消費しないので、エラーが出にくくなる
         prompt = f"""
-        あなたは優秀な大学院生の研究パートナーです。
-        以下の「検索結果」を読み込み、「ユーザーの研究テーマ」に対する有用性を分析してください。
+        あなたは優秀な研究パートナーです。
+        以下の情報を統合分析してください。
 
-        【ユーザーの研究テーマ】
-        {my_theme}
-
-        【検索された文献リスト】
-        {search_context}
+        【研究テーマ】{my_theme}
+        【検索結果】{search_context}
 
         【命令】
-        1. 検索結果に含まれる情報のみを事実として扱うこと（ハルシネーション禁止）。
-        2. 研究テーマに対して、どの文献のどのデータが役立つか具体的に指摘すること。
-
-        【出力フォーマット】
-        ## 📊 文献分析レポート
-        ### 1. 検索結果の要約
-        ### 2. 研究への活用ポイント
-        - **[タイトル]**: (活用法・要約)
-        ### 3. 次のアクション提案
+        1. 検索結果に含まれる情報を事実として扱い、研究にどう活かせるか提案してください。
+        2. 文献のタイトルとURLを引用元として明記してください。
         """
-
+        
         try:
             model = genai.GenerativeModel(selected_model_name)
-            with st.spinner("文献を分析中..."):
-                response = model.generate_content(prompt)
+            with st.spinner("分析中... (AI呼び出し消費: 1)"):
+                res = model.generate_content(prompt)
             
-            st.markdown(response.text)
+            st.markdown("### 📊 分析レポート")
+            st.write(res.text)
             
             with st.expander("📚 参照した文献ソース"):
                 st.text(search_context)
 
         except Exception as e:
-            st.error(f"AI分析エラー: {e}")
+            st.error(f"AIエラー (429が出たら1分待ってください): {e}")
