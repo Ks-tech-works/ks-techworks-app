@@ -8,7 +8,7 @@ from duckduckgo_search import DDGS
 st.set_page_config(page_title="K's Research Assistant", layout="wide", page_icon="🎓")
 
 st.title("🎓 K's Research Assistant")
-st.caption("Literature Search & Relevance Analysis | Powered by Gemini")
+st.caption("Smart Literature Search & Analysis | Powered by Gemini 1.5 Pro")
 
 # ==========================================
 # 1. サイドバー (設定 & モデル選択)
@@ -18,7 +18,6 @@ selected_model_name = None
 with st.sidebar:
     st.header("⚙️ 設定")
     try:
-        # 既存のSecretsがあれば使う、なければ入力
         api_key = st.secrets.get("GEMINI_API_KEY", None)
         if not api_key:
             api_key = st.text_input("Gemini API Key", type="password")
@@ -30,10 +29,8 @@ with st.sidebar:
     if api_key:
         genai.configure(api_key=api_key)
         
-        # ★ここが修正ポイント：使えるモデルを自動取得
         try:
             model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            # Proモデルを優先的に探す
             default_index = 0
             for i, m_name in enumerate(model_list):
                 if "gemini-1.5-pro" in m_name:
@@ -51,44 +48,79 @@ col1, col2 = st.columns([1, 1])
 with col1:
     st.subheader("📌 あなたの研究テーマ")
     my_theme = st.text_area(
-        "現在の研究内容・実験テーマなどを詳しく入力",
+        "研究の背景・目的など",
         height=150,
-        placeholder="例：\n災害時における在宅人工呼吸器の電源確保に関する研究。\n特に、ポータブル電源とソーラーパネルを組み合わせた際の実効稼働時間を実測し、避難所での運用マニュアルを作成したい。"
+        placeholder="例：\n災害時における在宅人工呼吸器の電源確保。\n車のシガーソケットからDC/ACインバータ経由で稼働させる際の実用性と安全性を検証したい。"
     )
 
 with col2:
-    st.subheader("🔎 知りたいこと・検索ワード")
+    st.subheader("🔎 調べたいトピック")
     search_query = st.text_area(
-        "何を調べますか？",
+        "具体的に知りたいこと（箇条書きでもOK）",
         height=150,
-        placeholder="例：\n在宅人工呼吸器 消費電力 比較\nポータブル電源 災害時 活用事例\nソーラーパネル 天候 充電効率"
+        placeholder="例：\nシガーソケットの最大出力電流\n正弦波インバータと矩形波の違い\n医療機器の電圧許容範囲"
     )
 
 # ==========================================
-# 3. 分析ロジック (AI脳)
+# 3. 分析ロジック (スマート検索実装)
 # ==========================================
-if st.button("🚀 文献検索 & 関連性分析", type="primary"):
-    if not api_key:
-        st.error("APIキーが設定されていません。")
+if st.button("🚀 スマート検索 & 分析開始", type="primary"):
+    if not api_key or not my_theme or not search_query:
+        st.error("入力欄をすべて埋めてください。")
     elif not selected_model_name:
-        st.error("AIモデルが選択されていません。サイドバーを確認してください。")
-    elif not my_theme or not search_query:
-        st.error("研究テーマと検索ワードを入力してください。")
+        st.error("AIモデルを選択してください。")
     else:
-        # --- A. DuckDuckGoで検索 ---
+        # --- A. 検索キーワードの生成 (AI) ---
+        final_keywords = ""
+        try:
+            # キーワード生成用モデル
+            model_kw = genai.GenerativeModel(selected_model_name)
+            
+            with st.spinner("最適な検索ワードを考案中..."):
+                kw_prompt = f"""
+                あなたは優秀なリサーチャーです。
+                ユーザーの研究テーマと知りたいことから、検索エンジン(DuckDuckGo)で最も質の高い学術情報・技術情報がヒットするような「検索キーワード」を3〜4単語で作成してください。
+
+                【研究テーマ】{my_theme}
+                【知りたいこと】{search_query}
+
+                【条件】
+                - 文章ではなく、スペース区切りの単語にする。
+                - 「論文」「ガイドライン」「仕様書」「実験データ」などの単語を含めると良い。
+                - 余計な解説は不要。キーワードのみ出力すること。
+                """
+                kw_res = model_kw.generate_content(kw_prompt)
+                final_keywords = kw_res.text.strip()
+                st.info(f"🔑 生成された検索ワード: **{final_keywords}**")
+
+        except Exception as e:
+            st.error(f"キーワード生成エラー: {e}")
+            st.stop()
+
+        # --- B. DuckDuckGoで検索 ---
         search_results = ""
         try:
-            with st.spinner(f"文献・情報を検索中... ({search_query})"):
+            with st.spinner(f"文献を検索中... ({final_keywords})"):
                 with DDGS() as ddgs:
-                    # 学術的な情報を優先するため "論文" "report" などを裏で足す
-                    results = list(ddgs.text(f"{search_query} 論文 レポート", region='jp-jp', max_results=5))
+                    # 日本語の学術・技術情報を優先
+                    results = list(ddgs.text(f"{final_keywords}", region='jp-jp', max_results=5))
+                    
+                    if not results:
+                        st.warning("検索結果が0件でした。キーワードを変えて再試行します...")
+                        # バックアップ：単純なキーワードで再検索
+                        results = list(ddgs.text(f"{search_query[:20]} 論文", region='jp-jp', max_results=3))
+
                     for i, r in enumerate(results):
                         search_results += f"【文献{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
         except Exception as e:
-            st.error(f"検索エラー: {e}")
+            st.error(f"検索エンジンエラー: {e}")
             st.stop()
 
-        # --- B. Geminiで分析 ---
+        if not search_results:
+            st.error("検索結果が見つかりませんでした。入力内容を少し変えてみてください。")
+            st.stop()
+
+        # --- C. Geminiで分析 (RAG) ---
         prompt = f"""
         あなたは優秀な大学院生の研究パートナー（Ph.D.候補生レベル）です。
         以下の「検索された文献」を読み込み、「ユーザーの研究テーマ」にとってどのような価値があるかを分析してください。
@@ -101,32 +133,27 @@ if st.button("🚀 文献検索 & 関連性分析", type="primary"):
 
         【命令】
         1. **ハルシネーション厳禁**: 検索結果に含まれる情報のみを事実として扱ってください。
-        2. **客観的引用**: 重要な数値や事実は、必ず「どの文献(URL)」からの情報か明記してください。
-        3. **関連性分析 (最重要)**: 単なる要約ではなく、「この文献の情報は、ユーザーの実験や論証にどう使えるか？（または反論材料になるか？）」を具体的にアドバイスしてください。
+        2. **関連性分析 (最重要)**: 「この文献のどのデータが、ユーザーの研究の参考になるか？」を具体的に指摘してください。
+        3. **引用**: 必ず情報の出所（文献タイトル/URL）を明記してください。
 
         【出力フォーマット】
-        ## 📊 分析レポート
+        ## 📊 文献分析レポート
         
         ### 1. 検索結果の概要 (Summary)
-        (検索された文献の要点を3行で)
+        (ヒットした情報の傾向と要点)
 
-        ### 2. 研究テーマとの関連性・活用法 (Relevance)
-        - **[文献タイトル]**: 
-            - 活用ポイント: （例：あなたの実験の先行研究として引用可能です）
-            - 具体的内容: （要約）
+        ### 2. 研究への活用ポイント (Insights)
+        - **[文献タイトル]**
+            - 💡 **活用法**: （例：〇〇の数値データは、実験の比較対象として使えます）
+            - 📝 **要約**: （内容の簡潔なまとめ）
         
-        ### 3. 客観的事実・データ (Facts)
-        - (数値データや重要な定義などを箇条書きで引用)
-
-        ### 4. 次のアクション提案
-        - (この結果を踏まえて、次に何を調べるべきか、実験計画をどう修正すべきか)
+        ### 3. 次に調べるべきこと
+        (今回の検索で足りなかった情報や、次に検索すべきキーワードの提案)
         """
 
         try:
-            # ★ここを修正：指定されたモデル名を使う
             model = genai.GenerativeModel(selected_model_name)
-            
-            with st.spinner("論文と研究テーマを照合中..."):
+            with st.spinner("論文と研究テーマを照合・分析中..."):
                 response = model.generate_content(prompt)
             
             st.markdown(response.text)
