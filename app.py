@@ -1,9 +1,27 @@
+import os
+import sys
+import subprocess
+import json
+
+# ---------------------------------------------------------
+# ★サーバー環境の強制最適化 (エラー回避の守護神)
+# ---------------------------------------------------------
+try:
+    import google.generativeai
+    # 古いライブラリなら強制アップデート
+    if getattr(google.generativeai, "__version__", "0.0.0") < "0.8.3":
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
+        import google.generativeai as genai
+    else:
+        import google.generativeai as genai
+except:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
+    import google.generativeai as genai
+
 import streamlit as st
-import google.generativeai as genai
 import pandas as pd
 from PIL import Image
 import re
-import json
 from datetime import datetime
 from duckduckgo_search import DDGS # 外部検索エンジン
 
@@ -24,35 +42,42 @@ st.markdown(f"""
         border-top: 1px solid #444; z-index: 100; font-family: sans-serif;
     }}
     .block-container {{ padding-bottom: 80px; }}
-    button[data-baseweb="tab"] {{ font-size: 18px !important; font-weight: bold !important; }}
+    /* スマホで見やすいように調整 */
+    p, li {{ font-size: 16px !important; }}
+    .stAlert {{ font-weight: bold; }}
     </style>
     <div class="footer">Produced by {COMPANY_NAME}</div>
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 脳みそ (人命最優先・厳格仕様)
+# 1. 脳みそ (医師同等・厳格仕様)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」です。
-提供された情報を統合し、臨床のプロとして診断推論を行ってください。
+「事実」と「推論」を区別し、特に**「アクションの優先順位」**を明確にして回答してください。
 
-【⚠️ 最重要・絶対遵守ルール (Life Safety)】
-1. **「知ったかぶり」は医療事故の元と心得よ**:
-   - あなたの出力は人の生死に関わります。検索結果（Search Results）や入力データにない情報を、想像で補完して「事実」として語ることは厳禁です。
-   - 根拠が不十分な場合は、無理に診断せず「エビデンス不足のため判断できません」と警告してください。
+【絶対ルール】
+緊急性の高い現場（スマホ閲覧）を想定し、結論ファーストで簡潔に記述すること。
+検索結果（Search Results）の内容を重視し、ハルシネーション（嘘）を防ぐこと。
 
-2. **エビデンス・ファースト**:
-   - 治療方針を提案する際は、必ず検索された「ガイドライン」や「信頼できる文献」を根拠としてください。
-   - 検索結果の出典（Source）を明記し、情報の信頼性を担保してください。
+【回答セクション構成】（以下のタグを必ず守ること）
 
-3. **バイアスの徹底排除**:
-   - 「既往歴があるから今回も同じ」という思い込みを捨て、トレンドデータの矛盾（急変の兆候）を見逃さないでください。
+---SECTION_PLAN_EMERGENCY---
+**【最優先・緊急アクション (Do Now)】**
+生命維持のために「今すぐ」行うべき処置・オーダーのみを箇条書きで。
+（例：昇圧剤開始、挿管準備、急速輸液など）
 
-【回答フォーマット】
-1. **Clinical Summary**: 患者の状態要約（客観的事実のみ）
-2. **Integrated Assessment**: 病歴×数値トレンド×検索結果の統合見解
-3. **Evidence**: 根拠とした文献（※検索結果になければ「なし」と明記）
-4. **Plan**: 推奨アクション（優先順位をつけて具体的数値で指示）
+---SECTION_AI_OPINION---
+**【病態推論・クロスオーバー分析】**
+病歴とトレンドデータの矛盾（DO2とLactateの乖離など）や、隠れた病態（Warm Shock, DKA等）への言及。
+
+---SECTION_PLAN_ROUTINE---
+**【次の一手・管理方針 (Do Next)】**
+緊急処置の次に行うべき検査、モニタリング項目、根本治療計画。
+
+---SECTION_FACT---
+**【エビデンス・根拠】**
+検索結果に基づくガイドラインや文献の引用。
 """
 
 # ==========================================
@@ -107,7 +132,7 @@ with st.sidebar:
                 json_str = json.dumps(current_data, indent=2, default=str, ensure_ascii=False)
                 st.download_button("📥 データを保存", json_str, f"{current_patient_id}.json", "application/json", key="dl_btn")
             else:
-                st.info("※数値を記録すると保存ボタンが出ます")
+                st.info("※記録すると保存ボタンが出現")
                 st.button("📥 データなし", disabled=True, key="dl_btn_d")
             
             uploaded_file = st.file_uploader("📤 データを復元", type=["json"], key="up_btn")
@@ -116,7 +141,7 @@ with st.sidebar:
                     loaded_data = json.load(uploaded_file)
                     st.session_state['patient_db'][current_patient_id] = loaded_data
                     st.success(f"復元成功 ({len(loaded_data)}件)")
-                    if st.button("🔄 反映"): st.rerun()
+                    if st.button("🔄 グラフ反映"): st.rerun()
                 except: pass
             
             st.markdown("---")
@@ -133,9 +158,9 @@ if not current_patient_id:
     st.stop()
 
 st.caption(f"Patient: **{current_patient_id}**")
-tab1, tab2 = st.tabs(["📝 総合診断 (Safety Check)", "📈 トレンド管理"])
+tab1, tab2 = st.tabs(["📝 総合診断 (Smart Search)", "📈 トレンド管理"])
 
-# === TAB 2: トレンド管理 ===
+# === TAB 2: トレンド管理 (AG・電解質・グラフ修正完備) ===
 with tab2:
     st.info("数値入力 (必要な項目のみ)")
     
@@ -153,7 +178,7 @@ with tab2:
     ph = c3.number_input("pH", step=0.01, value=None, key="n_ph")
     svo2 = c3.number_input("SvO2", step=1.0, value=None, key="n_svo2")
 
-    # 電解質・AG
+    # 電解質・AG (DKA診断用)
     st.caption("▼ 電解質 (AG計算用)")
     e1, e2, e3, e4 = st.columns(4)
     na = e1.number_input("Na", step=1.0, value=None, key="n_na")
@@ -192,30 +217,37 @@ with tab2:
             "Time": datetime.now().strftime("%H:%M:%S"),
             "P/F": pf, "DO2": do2, "O2ER": o2er, 
             "Lactate": lac, "Hb": hb, "pH": ph,
-            "AG": c_ag if c_ag else ag
+            "AG": c_ag if c_ag else ag # AGも保存
         }
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
     
-    # グラフ
+    # --- グラフ描画 (エラー絶対回避版) ---
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
+        
+        # 必須カラムがなくても落ちないように補完
         target_cols = ["P/F", "DO2", "O2ER", "Lactate", "Hb", "pH", "AG"]
         for col in target_cols:
-            if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
+            if col not in df.columns: df[col] = None
+            df[col] = pd.to_numeric(df[col], errors='coerce')
         
         g1, g2 = st.columns(2)
         with g1:
             st.markdown("##### 呼吸・代謝 (P/F, O2ER, Lac)")
-            st.line_chart(df.set_index("Time")[["P/F", "O2ER", "Lactate"]])
+            # データがある列だけプロット
+            available_cols1 = [c for c in ["P/F", "O2ER", "Lactate"] if df[c].notna().any()]
+            if available_cols1: st.line_chart(df.set_index("Time")[available_cols1])
+            
         with g2:
             st.markdown("##### 酸塩基・循環 (AG, pH, DO2)")
-            st.line_chart(df.set_index("Time")[["AG", "pH", "DO2"]])
+            available_cols2 = [c for c in ["AG", "pH", "DO2"] if df[c].notna().any()]
+            if available_cols2: st.line_chart(df.set_index("Time")[available_cols2])
         
-        with st.expander("🔍 生データ"): st.dataframe(df)
+        with st.expander("🔍 生データ確認"): st.dataframe(df)
 
-# === TAB 1: 総合診断 (Smart Search & Safety) ===
+# === TAB 1: 総合診断 (スマホ最適化UI + スマート検索) ===
 with tab1:
     col1, col2 = st.columns(2)
     hist_text = col1.text_area("病歴")
@@ -227,58 +259,4 @@ with tab1:
             st.error("APIキーを入れてください")
         else:
             trend_str = "なし"
-            hist = st.session_state['patient_db'].get(current_patient_id, [])
-            if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
-            
-            # 1. 検索 (Smart Search)
-            search_context = ""
-            search_key = ""
-            try:
-                model_kw = genai.GenerativeModel(model_name=selected_model_name)
-                # 病名推定も含めて検索ワードを作らせる
-                kw_res = model_kw.generate_content(f"以下の情報から医学的検索語を3つ抽出(スペース区切り)。記号不可。\n{hist_text[:100]}\n{lab_text[:100]}")
-                search_key = kw_res.text.strip()
-                with st.spinner(f"エビデンス確認中... ({search_key})"):
-                    with DDGS() as ddgs:
-                        # 日本語医学情報を優先
-                        results = list(ddgs.text(f"{search_key} ガイドライン", region='jp-jp', max_results=3))
-                        for i, r in enumerate(results): search_context += f"Title: {r['title']}\nURL: {r['href']}\nBody: {r['body']}\n\n"
-            except Exception as e:
-                search_context = f"(検索システムエラー: {e})"
-
-            # 2. 生成
-            prompt = f"""
-            情報を統合分析せよ。
-            【病歴】{hist_text}
-            【検査】{lab_text}
-            【トレンド】{trend_str}
-            【検索結果 (Evidence)】{search_context}
-            """
-            
-            content = [prompt]
-            if up_file:
-                for f in up_file: content.append(Image.open(f))
-
-            try:
-                model = genai.GenerativeModel(model_name=selected_model_name, system_instruction=KUSANO_BRAIN)
-                with st.spinner("診断推論中..."):
-                    res = model.generate_content(content)
-                
-                # --- 結果のパースと表示 ---
-                raw = res.text
-                
-                st.markdown("### 👨‍⚕️ Assessment Result")
-                st.write(raw) # 万が一パースできなくても全文は表示
-
-                # 責任表示
-                st.warning("⚠️ **【重要】本システムは診断支援AIです。最終的な医療判断は必ず医師が行ってください。**")
-
-                # 根拠事実 (アコーディオン)
-                if search_context and "エラー" not in search_context:
-                    with st.expander("📚 エビデンス・参照データ (Fact)"):
-                        st.text(search_context)
-                elif "エラー" in search_context:
-                    st.error("⚠️ 検索機能が動作しませんでした。AIの推論のみの回答です。")
-
-            except Exception as e:
-                st.error(f"Error: {e}")
+            hist = st.session_state['patient_db'].get(current_patient_id,
