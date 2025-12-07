@@ -17,14 +17,14 @@ st.markdown(f"""
     }}
     .block-container {{ padding-bottom: 80px; }}
     </style>
-    <div class="footer">K's Research Assistant | Academic Mode</div>
+    <div class="footer">K's Research Assistant | Multi-Search Mode</div>
     """, unsafe_allow_html=True)
 
 st.title("🎓 K's Research Assistant")
-st.caption("大学院研究・論文検索支援システム (ハルシネーション防止版)")
+st.caption("複合検索＆多角的分析システム")
 
 # ==========================================
-# 1. サイドバー (設定)
+# 1. サイドバー
 # ==========================================
 selected_model_name = None
 
@@ -41,9 +41,7 @@ with st.sidebar:
 
     if api_key:
         genai.configure(api_key=api_key)
-        
         try:
-            # モデル自動取得
             model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             default_index = 0
             for i, m_name in enumerate(model_list):
@@ -64,7 +62,7 @@ with col1:
     my_theme = st.text_area(
         "実験の目的や前提条件",
         height=200,
-        placeholder="例：\n災害時停電下において、車のシガーソケット(DC12V)からインバータを介して「人工呼吸器」と「吸引機」を同時稼働させる際の安全性評価。\n特に突入電流による電圧降下で機器が停止しないかを検証したい。"
+        value="災害時停電下において、車のシガーソケット(DC12V)からインバータを介して「人工呼吸器」と「吸引機」を同時稼働させる際の安全性評価。\n特に突入電流による電圧降下で機器が停止しないかを検証したい。"
     )
 
 with col2:
@@ -72,75 +70,92 @@ with col2:
     search_query = st.text_area(
         "検索したい具体的な項目",
         height=200,
-        placeholder="例：\n・車載インバータの変換効率と医療機器への適合性\n・人工呼吸器の許容電圧範囲\n・吸引機の起動時サージ電力\n・災害時電源確保のガイドライン"
+        value="・車載インバータの変換効率と医療機器への適合性\n・人工呼吸器の許容電圧範囲\n・吸引機の起動時サージ電力\n・災害時電源確保のガイドライン"
     )
 
 # ==========================================
-# 3. 分析ロジック (学術検索強化版)
+# 3. 分析ロジック (マルチ検索実装)
 # ==========================================
-if st.button("🚀 学術検索 & 分析開始", type="primary"):
+if st.button("🚀 マルチ検索 & 分析開始", type="primary"):
     if not api_key or not my_theme or not search_query:
         st.error("入力欄をすべて埋めてください。")
     elif not selected_model_name:
         st.error("モデルが選択されていません。")
     else:
-        # --- A. 検索キーワード生成 (ここを厳格化！) ---
-        final_keywords = ""
+        # --- A. 検索キーワード生成 (3つの視点) ---
+        queries = []
         try:
             model_kw = genai.GenerativeModel(selected_model_name)
             
-            with st.spinner("専門用語を抽出して検索ワードを構築中..."):
-                # ★名言集などを排除するための「学術指定プロンプト」
+            with st.spinner("検索戦略を立案中... (3つの視点でクエリ生成)"):
                 kw_prompt = f"""
-                あなたは理工学・医学系の専門リサーチャーです。
-                ユーザーの研究テーマに関連する「学術論文」「技術仕様書」「ガイドライン」を検索するための、最適な検索クエリを作成してください。
+                あなたは専門リサーチャーです。
+                ユーザーの研究テーマを調査するために、検索エンジン(DuckDuckGo)で検索すべき「3つの異なる切り口」の検索クエリを作成してください。
 
-                【研究テーマ】{my_theme}
-                【知りたいこと】{search_query}
+                【テーマ】{my_theme}
+                【詳細】{search_query}
 
-                【絶対ルール】
-                1. 一般的な用語は避け、専門用語（例: "DC-ACインバータ", "サージ電流", "J-SSCG", "性能評価"）を使うこと。
-                2. ノイズ（ブログや名言集）を除外するため、クエリの末尾に必ず **"論文 OR ガイドライン OR 仕様書"** を付与すること。
-                3. 出力は「検索クエリ文字列」のみとする。（解説不要）
-                
-                出力例: 車載DC-ACインバータ 医療機器 適合性 論文 OR ガイドライン
+                【条件】
+                1. 1つのクエリは3〜4単語程度の「短い専門用語の羅列」にする（長すぎるとヒットしないため）。
+                2. 以下の3つの視点で作成すること。
+                   - 視点1: 電源・工学的視点（インバータ、電圧、波形など）
+                   - 視点2: 医療機器・スペック視点（人工呼吸器、電力、JISなど）
+                   - 視点3: 運用・ガイドライン視点（災害医療、マニュアルなど）
+                3. 出力形式は、3行のテキストのみ（番号や解説は不要）。
+
+                例:
+                車載 DC-ACインバータ 正弦波 医療機器 適合
+                人工呼吸器 動作電圧範囲 許容変動 JIS
+                災害時 在宅人工呼吸療法 電源確保 ガイドライン
                 """
                 kw_res = model_kw.generate_content(kw_prompt)
-                final_keywords = kw_res.text.strip()
-                st.info(f"🔑 使用する検索クエリ: **{final_keywords}**")
+                # 行ごとに分割してリスト化
+                raw_queries = kw_res.text.strip().split('\n')
+                queries = [q.strip() for q in raw_queries if q.strip()]
+                
+                # 画面に表示
+                st.info("🗝️ **生成された検索戦略:**")
+                for q in queries:
+                    st.write(f"- `{q}`")
 
         except Exception as e:
             st.error(f"キーワード生成エラー: {e}")
             st.stop()
 
-        # --- B. DuckDuckGoで検索 ---
+        # --- B. DuckDuckGoでマルチ検索 ---
         search_results_text = ""
-        try:
-            with st.spinner("論文・技術情報を検索中... (DuckDuckGo)"):
-                with DDGS() as ddgs:
-                    # 日本語の情報を優先検索
-                    results = list(ddgs.text(final_keywords, region='jp-jp', max_results=5))
-                    
-                    if not results:
-                        st.warning("検索結果が0件でした。条件を緩めて再検索します...")
-                        # バックアップ検索（キーワードを単純化）
-                        backup_query = f"{search_query[:20]} 医療 論文"
-                        results = list(ddgs.text(backup_query, region='jp-jp', max_results=3))
+        unique_urls = set() # 重複排除用
 
-                    for i, r in enumerate(results):
-                        search_results_text += f"【文献{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
+        try:
+            with DDGS() as ddgs:
+                progress_bar = st.progress(0)
+                
+                for i, query in enumerate(queries):
+                    with st.spinner(f"検索実行中 ({i+1}/{len(queries)}): {query}"):
+                        # 各クエリで3件ずつ検索
+                        results = list(ddgs.text(query, region='jp-jp', max_results=3))
+                        
+                        for r in results:
+                            if r['href'] not in unique_urls: # URL重複チェック
+                                unique_urls.add(r['href'])
+                                search_results_text += f"【文献】\nTitle: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
+                    
+                    progress_bar.progress((i + 1) / len(queries))
+                
+                progress_bar.empty()
+
         except Exception as e:
             st.error(f"検索エンジンエラー: {e}")
-            st.stop()
+            # エラーでも検索結果が少しでもあれば続行
 
         if not search_results_text:
-            st.error("有効な情報が見つかりませんでした。検索ワードを変えて試してください。")
+            st.error("有効な情報が見つかりませんでした。テーマを少し具体的に書き直してみてください。")
             st.stop()
 
         # --- C. Geminiで分析 (RAG) ---
         prompt = f"""
         あなたは優秀な大学院生の研究パートナー（Ph.D.候補生レベル）です。
-        以下の「検索された文献」を読み込み、「ユーザーの研究テーマ」に対する有用性を分析してください。
+        以下の「複数の検索結果」を統合し、「ユーザーの研究テーマ」に対する有用性を分析してください。
 
         【ユーザーの研究テーマ】
         {my_theme}
@@ -150,32 +165,33 @@ if st.button("🚀 学術検索 & 分析開始", type="primary"):
 
         【命令】
         1. **ハルシネーション厳禁**: 検索結果に含まれる情報のみを事実として扱ってください。
-        2. **関連性評価**: もし検索結果が「名言」や「無関係なブログ」だった場合は、「役に立つ情報はありませんでした」と正直に報告し、嘘の分析をしないでください。
-        3. **活用アドバイス**: 有用な文献があれば、それを実験や論文執筆にどう活かせるか具体的に提案してください。
+        2. **情報の統合**: 複数の検索結果から、共通するリスク（例：矩形波インバータの問題点など）や、重要な数値を抽出してください。
+        3. **活用アドバイス**: 実験計画や論文執筆にどう活かせるか具体的に提案してください。
 
         【出力フォーマット】
-        ## 📊 文献分析レポート
+        ## 📊 統合分析レポート
         
-        ### 1. 検索結果の概要
-        (ヒットした情報の質について評価)
+        ### 1. 検索結果の要約 (Key Findings)
+        (検索全体から判明した重要な事実)
 
         ### 2. 研究への活用ポイント
-        - **[文献タイトル]**: 
-            - 💡 **活用法**: 
-            - 📝 **内容要約**: 
+        - **[技術的課題]**: （例：短形波インバータでは医療機器が誤作動するリスクについて...）
+            - 🔗 根拠: [文献タイトル/URL]
+        - **[実験パラメータ]**: （例：測定すべき電圧変動の範囲について...）
+            - 🔗 根拠: [文献タイトル/URL]
         
         ### 3. 次のアクション提案
-        (実験計画の修正案や、追加で調べるべきパラメータなど)
+        (実験機材の選定や、測定項目の追加提案など)
         """
 
         try:
             model = genai.GenerativeModel(selected_model_name)
-            with st.spinner("文献を精査・分析中..."):
+            with st.spinner("文献を精査・統合分析中..."):
                 response = model.generate_content(prompt)
             
             st.markdown(response.text)
             
-            with st.expander("📚 参照した文献ソース (Raw Data)"):
+            with st.expander("📚 参照した全文献ソース (Raw Data)"):
                 st.text(search_results_text)
 
         except Exception as e:
