@@ -249,7 +249,7 @@ with tab2:
         
         with st.expander("🔍 生データ確認"): st.dataframe(df)
 
-# === TAB 1: 総合診断 (スマホ最適化UI + スマート検索) ===
+# === # === TAB 1: 総合診断 (スマホ最適化UI + スマート検索) ===
 with tab1:
     col1, col2 = st.columns(2)
     hist_text = col1.text_area("病歴")
@@ -261,4 +261,67 @@ with tab1:
             st.error("APIキーを入れてください")
         else:
             trend_str = "なし"
+            # ★この行です。ちゃんと直っています！
             hist = st.session_state['patient_db'].get(current_patient_id, [])
+            
+            if hist: 
+                trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
+            
+            # 2. AIへのプロンプト作成
+            prompt = f"""
+            以下の情報を【統合的に】分析してください。
+            【Tab 1: 病歴】{hist_text}
+            【Tab 1: 検査】{lab_text}
+            【Tab 2: トレンド】{trend_str}
+            
+            Google検索ツールを使用し、ガイドラインやエビデンスに基づいた診断を行ってください。
+            """
+            
+            content = [prompt]
+            if up_file:
+                for f in up_file: content.append(Image.open(f))
+
+            # 3. AI実行
+            try:
+                model = genai.GenerativeModel(model_name=selected_model_name, system_instruction=KUSANO_BRAIN)
+                
+                with st.spinner("思考中... (Google検索で裏付け確認中)"):
+                    res = model.generate_content(
+                        content,
+                        tools=[{"google_search": {}}]
+                    )
+                
+                # --- 結果のパースと表示 ---
+                raw = res.text
+                parts_emer = raw.split("---SECTION_PLAN_EMERGENCY---")
+                parts_ai   = raw.split("---SECTION_AI_OPINION---")
+                parts_rout = raw.split("---SECTION_PLAN_ROUTINE---")
+                parts_fact = raw.split("---SECTION_FACT---")
+
+                if len(parts_emer) > 1:
+                    emer_content = parts_emer[1].split("---SECTION")[0].strip()
+                    st.error(f"🚨 **【最優先・緊急アクション】**\n\n{emer_content}", icon="⚡")
+
+                if len(parts_ai) > 1:
+                    ai_content = parts_ai[1].split("---SECTION")[0].strip()
+                    st.warning(f"🤔 **【病態評価・推論】**\n\n{ai_content}", icon="🧠")
+
+                if len(parts_rout) > 1:
+                    rout_content = parts_rout[1].split("---SECTION")[0].strip()
+                    st.info(f"✅ **【管理方針・検査オーダー】**\n\n{rout_content}", icon="📋")
+
+                if len(parts_fact) > 1:
+                    fact_content = parts_fact[1].split("---SECTION")[0].strip()
+                    with st.expander("📚 エビデンス・参照データ (Fact)"):
+                        st.markdown(fact_content)
+                        if res.candidates[0].grounding_metadata.search_entry_point:
+                            st.divider()
+                            st.caption("🌐 Google Search Source:")
+                            st.write(res.candidates[0].grounding_metadata.search_entry_point.rendered_content)
+
+                if "---SECTION" not in raw: st.write(raw)
+                
+                st.warning("⚠️ **【重要】本システムは診断支援AIです。最終的な医療判断は必ず医師が行ってください。**")
+
+            except Exception as e:
+                st.error(f"Error: {e}")
