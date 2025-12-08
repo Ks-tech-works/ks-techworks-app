@@ -261,4 +261,4 @@ with tab1:
             st.error("APIキーを入れてください")
         else:
             trend_str = "なし"
-            hist = st.session_state['patient_db'].get(current_patient_id,
+            hist = st.session_state['patient_db'].get(current_patient_id, [])
