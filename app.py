@@ -4,10 +4,11 @@ import subprocess
 import json
 
 # ---------------------------------------------------------
-# ★サーバー環境の強制最適化
+# ★サーバー環境の強制最適化 (エラー回避の守護神)
 # ---------------------------------------------------------
 try:
     import google.generativeai
+    # 古いライブラリなら強制アップデート
     if getattr(google.generativeai, "__version__", "0.0.0") < "0.8.3":
         subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
         import google.generativeai as genai
@@ -22,7 +23,7 @@ import pandas as pd
 from PIL import Image
 import re
 from datetime import datetime
-from duckduckgo_search import DDGS
+from duckduckgo_search import DDGS # 外部検索エンジン
 
 # ==========================================
 # 0. アプリ設定
@@ -41,6 +42,7 @@ st.markdown(f"""
         border-top: 1px solid #444; z-index: 100; font-family: sans-serif;
     }}
     .block-container {{ padding-bottom: 80px; }}
+    /* スマホで見やすいように調整 */
     p, li {{ font-size: 16px !important; }}
     .stAlert {{ font-weight: bold; }}
     </style>
@@ -48,22 +50,24 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 脳みそ
+# 1. 脳みそ (医師同等・厳格仕様)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」です。
 「事実」と「推論」を区別し、特に**「アクションの優先順位」**を明確にして回答してください。
 
 【絶対ルール】
-緊急性の高い現場（スマホ閲覧）を想定し、結論ファーストで簡潔に記述すること。
-検索結果（Search Results）の内容を重視し、ハルシネーション（嘘）を防ぐこと。
+1. 緊急性の高い現場（スマホ閲覧）を想定し、結論ファーストで簡潔に記述すること。
+2. Google検索ツールを使用して裏付けを取り、ハルシネーション（嘘）を防ぐこと。
+3. **CE（臨床工学技士）の具体的な責任範囲（生命維持装置の準備/設定）**と、**それ以外の処置に必要な関係部署（医師、透析チーム、灌流チームなど）への緊急要請**を最優先で明確に指示すること。
+4. 不安定な循環動態（低CO/低BP）の患者に対して、**体位変換（腹臥位など）は緊急アクションに含まない**こと。
 
 【回答セクション構成】（以下のタグを必ず守ること）
 
 ---SECTION_PLAN_EMERGENCY---
 **【最優先・緊急アクション (Do Now)】**
 生命維持のために「今すぐ」行うべき処置・オーダーのみを箇条書きで。
-（例：昇圧剤開始、挿管準備、急速輸液など）
+（例：CVC確保、昇圧剤開始、挿管準備、PCPS/CRRTの準備開始など）
 
 ---SECTION_AI_OPINION---
 **【病態推論・クロスオーバー分析】**
@@ -130,7 +134,7 @@ with st.sidebar:
                 json_str = json.dumps(current_data, indent=2, default=str, ensure_ascii=False)
                 st.download_button("📥 データを保存", json_str, f"{current_patient_id}.json", "application/json", key="dl_btn")
             else:
-                st.info("※数値を記録すると保存ボタンが出現")
+                st.info("※記録すると保存ボタンが出現")
                 st.button("📥 データなし", disabled=True, key="dl_btn_d")
             
             uploaded_file = st.file_uploader("📤 データを復元", type=["json"], key="up_btn")
@@ -158,10 +162,11 @@ if not current_patient_id:
 st.caption(f"Patient: **{current_patient_id}**")
 tab1, tab2 = st.tabs(["📝 総合診断 (Smart Search)", "📈 トレンド管理"])
 
-# === TAB 2: トレンド管理 ===
+# === TAB 2: トレンド管理 (AG・電解質・グラフ修正完備) ===
 with tab2:
     st.info("数値入力 (必要な項目のみ)")
     
+    # 呼吸・循環・代謝
     st.caption("▼ 呼吸・循環・代謝")
     c1, c2, c3 = st.columns(3)
     pao2 = c1.number_input("PaO2", step=1.0, value=None, key="n_pao2")
@@ -175,6 +180,7 @@ with tab2:
     ph = c3.number_input("pH", step=0.01, value=None, key="n_ph")
     svo2 = c3.number_input("SvO2", step=1.0, value=None, key="n_svo2")
 
+    # 電解質・AG (DKA診断用)
     st.caption("▼ 電解質 (AG計算用)")
     e1, e2, e3, e4 = st.columns(4)
     na = e1.number_input("Na", step=1.0, value=None, key="n_na")
@@ -196,7 +202,7 @@ with tab2:
     
     if na and cl and hco3:
         ag = na - (cl + hco3)
-        if alb: c_ag = ag + 2.5 * (4.0 - alb)
+        if alb: c_ag = ag + 2.5 * (4.0 - alb) # 補正AG
 
     # プレビュー
     cols = st.columns(4)
@@ -213,16 +219,17 @@ with tab2:
             "Time": datetime.now().strftime("%H:%M:%S"),
             "P/F": pf, "DO2": do2, "O2ER": o2er, 
             "Lactate": lac, "Hb": hb, "pH": ph,
-            "AG": c_ag if c_ag else ag
+            "AG": c_ag if c_ag else ag # AGも保存
         }
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
     
-    # --- グラフ描画 (Syntax Errorはここで起きていました。修正済み！) ---
+    # --- グラフ描画 (エラー絶対回避版) ---
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
         
+        # 必須カラムがなくても落ちないように補完
         target_cols = ["P/F", "DO2", "O2ER", "Lactate", "Hb", "pH", "AG"]
         for col in target_cols:
             if col not in df.columns: df[col] = None
@@ -231,6 +238,7 @@ with tab2:
         g1, g2 = st.columns(2)
         with g1:
             st.markdown("##### 呼吸・代謝 (P/F, O2ER, Lac)")
+            # データがある列だけプロット
             available_cols1 = [c for c in ["P/F", "O2ER", "Lactate"] if df[c].notna().any()]
             if available_cols1: st.line_chart(df.set_index("Time")[available_cols1])
             
@@ -241,7 +249,7 @@ with tab2:
         
         with st.expander("🔍 生データ確認"): st.dataframe(df)
 
-# === TAB 1: 総合診断 ===
+# === TAB 1: 総合診断 (スマホ最適化UI + スマート検索) ===
 with tab1:
     col1, col2 = st.columns(2)
     hist_text = col1.text_area("病歴")
@@ -253,66 +261,4 @@ with tab1:
             st.error("APIキーを入れてください")
         else:
             trend_str = "なし"
-            hist = st.session_state['patient_db'].get(current_patient_id, [])
-            if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
-            
-            search_context = ""
-            search_key = ""
-            try:
-                model_kw = genai.GenerativeModel(model_name=selected_model_name)
-                kw_res = model_kw.generate_content(f"以下の情報から医学的検索語を3つ抽出(スペース区切り)。記号不可。\n{hist_text[:100]}\n{lab_text[:100]}")
-                search_key = kw_res.text.strip()
-                with st.spinner(f"検索中... ({search_key})"):
-                    with DDGS() as ddgs:
-                        results = list(ddgs.text(f"{search_key} ガイドライン", region='jp-jp', max_results=3))
-                        for i, r in enumerate(results): search_context += f"Title: {r['title']}\nURL: {r['href']}\nBody: {r['body']}\n\n"
-            except Exception as e:
-                search_context = f"(検索システムエラー: {e})"
-
-            prompt = f"""
-            情報を統合分析せよ。
-            【病歴】{hist_text}
-            【検査】{lab_text}
-            【トレンド】{trend_str}
-            【検索結果 (Evidence)】{search_context}
-            """
-            
-            content = [prompt]
-            if up_file:
-                for f in up_file: content.append(Image.open(f))
-
-            try:
-                model = genai.GenerativeModel(model_name=selected_model_name, system_instruction=KUSANO_BRAIN)
-                with st.spinner("診断推論中..."):
-                    res = model.generate_content(content)
-                
-                raw = res.text
-                parts_emer = raw.split("---SECTION_PLAN_EMERGENCY---")
-                parts_ai   = raw.split("---SECTION_AI_OPINION---")
-                parts_rout = raw.split("---SECTION_PLAN_ROUTINE---")
-                parts_fact = raw.split("---SECTION_FACT---")
-
-                if len(parts_emer) > 1:
-                    emer_content = parts_emer[1].split("---SECTION")[0].strip()
-                    st.error(f"🚨 **【最優先・緊急アクション】**\n\n{emer_content}", icon="⚡")
-
-                if len(parts_ai) > 1:
-                    ai_content = parts_ai[1].split("---SECTION")[0].strip()
-                    st.warning(f"🤔 **【病態評価・推論】**\n\n{ai_content}", icon="🧠")
-
-                if len(parts_rout) > 1:
-                    rout_content = parts_rout[1].split("---SECTION")[0].strip()
-                    st.info(f"✅ **【管理方針・検査オーダー】**\n\n{rout_content}", icon="📋")
-
-                if len(parts_fact) > 1:
-                    fact_content = parts_fact[1].split("---SECTION")[0].strip()
-                    with st.expander("📚 エビデンス・参照データ (Fact)"):
-                        st.markdown(fact_content)
-                        if search_context: st.text(search_context)
-
-                if "---SECTION" not in raw: st.write(raw)
-                
-                st.warning("⚠️ **【重要】本システムは診断支援AIです。最終的な医療判断は必ず医師が行ってください。**")
-
-            except Exception as e:
-                st.error(f"Error: {e}")
+            hist = st.session_state['patient_db'].get(current_patient_id,
