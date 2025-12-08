@@ -1,29 +1,11 @@
-import os
-import sys
-import subprocess
-import json
-
-# ---------------------------------------------------------
-# ★サーバー環境の強制最適化 (エラー回避の守護神)
-# ---------------------------------------------------------
-try:
-    import google.generativeai
-    # 古いライブラリなら強制アップデート
-    if getattr(google.generativeai, "__version__", "0.0.0") < "0.8.3":
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
-        import google.generativeai as genai
-    else:
-        import google.generativeai as genai
-except:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai==0.8.3"])
-    import google.generativeai as genai
-
 import streamlit as st
+import google.generativeai as genai
 import pandas as pd
 from PIL import Image
 import re
+import json
 from datetime import datetime
-from duckduckgo_search import DDGS # 外部検索エンジン
+from duckduckgo_search import DDGS # 安定のDuckDuckGoを使用
 
 # ==========================================
 # 0. アプリ設定
@@ -50,7 +32,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 脳みそ (医師同等・厳格仕様)
+# 1. 脳みそ (医師同等・厳格仕様・CE視点強化版)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、市立長浜病院・臨床工学技術科次長「草野（Kusano）」です。
@@ -96,7 +78,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ System Config")
-    st.caption("Mode: Medical Safety First")
+    st.caption("Mode: Stable DuckDuckGo")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -160,13 +142,12 @@ if not current_patient_id:
     st.stop()
 
 st.caption(f"Patient: **{current_patient_id}**")
-tab1, tab2 = st.tabs(["📝 総合診断 (Smart Search)", "📈 トレンド管理"])
+tab1, tab2 = st.tabs(["📝 総合診断 (Stable)", "📈 トレンド管理"])
 
 # === TAB 2: トレンド管理 (AG・電解質・グラフ修正完備) ===
 with tab2:
-    st.info("数値入力 (必要な項目のみ)")
+    st.info("数値入力")
     
-    # 呼吸・循環・代謝
     st.caption("▼ 呼吸・循環・代謝")
     c1, c2, c3 = st.columns(3)
     pao2 = c1.number_input("PaO2", step=1.0, value=None, key="n_pao2")
@@ -180,7 +161,6 @@ with tab2:
     ph = c3.number_input("pH", step=0.01, value=None, key="n_ph")
     svo2 = c3.number_input("SvO2", step=1.0, value=None, key="n_svo2")
 
-    # 電解質・AG (DKA診断用)
     st.caption("▼ 電解質 (AG計算用)")
     e1, e2, e3, e4 = st.columns(4)
     na = e1.number_input("Na", step=1.0, value=None, key="n_na")
@@ -202,15 +182,15 @@ with tab2:
     
     if na and cl and hco3:
         ag = na - (cl + hco3)
-        if alb: c_ag = ag + 2.5 * (4.0 - alb) # 補正AG
+        if alb: c_ag = ag + 2.5 * (4.0 - alb)
 
     # プレビュー
     cols = st.columns(4)
     if pf: cols[0].metric("P/F", f"{pf:.0f}")
     if do2: cols[1].metric("DO2", f"{do2:.0f}")
     if o2er: cols[2].metric("O2ER", f"{o2er:.1f}%")
-    if c_ag: cols[3].metric("AG(補正)", f"{c_ag:.1f}")
-    elif ag: cols[3].metric("AG(実測)", f"{ag:.1f}")
+    if c_ag: cols[3].metric("AG(補)", f"{c_ag:.1f}")
+    elif ag: cols[3].metric("AG", f"{ag:.1f}")
 
     if st.button("💾 記録"):
         if current_patient_id not in st.session_state['patient_db']: st.session_state['patient_db'][current_patient_id] = []
@@ -219,17 +199,16 @@ with tab2:
             "Time": datetime.now().strftime("%H:%M:%S"),
             "P/F": pf, "DO2": do2, "O2ER": o2er, 
             "Lactate": lac, "Hb": hb, "pH": ph,
-            "AG": c_ag if c_ag else ag # AGも保存
+            "AG": c_ag if c_ag else ag
         }
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
     
-    # --- グラフ描画 (エラー絶対回避版) ---
+    # --- グラフ描画 (修正済) ---
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
         
-        # 必須カラムがなくても落ちないように補完
         target_cols = ["P/F", "DO2", "O2ER", "Lactate", "Hb", "pH", "AG"]
         for col in target_cols:
             if col not in df.columns: df[col] = None
@@ -237,19 +216,18 @@ with tab2:
         
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown("##### 呼吸・代謝 (P/F, O2ER, Lac)")
-            # データがある列だけプロット
+            st.markdown("##### 呼吸・代謝")
             available_cols1 = [c for c in ["P/F", "O2ER", "Lactate"] if df[c].notna().any()]
             if available_cols1: st.line_chart(df.set_index("Time")[available_cols1])
             
         with g2:
-            st.markdown("##### 酸塩基・循環 (AG, pH, DO2)")
+            st.markdown("##### 酸塩基・循環")
             available_cols2 = [c for c in ["AG", "pH", "DO2"] if df[c].notna().any()]
             if available_cols2: st.line_chart(df.set_index("Time")[available_cols2])
         
         with st.expander("🔍 生データ確認"): st.dataframe(df)
 
-# === # === TAB 1: 総合診断 (スマホ最適化UI + スマート検索) ===
+# === TAB 1: 総合診断 (DuckDuckGo + 修正済) ===
 with tab1:
     col1, col2 = st.columns(2)
     hist_text = col1.text_area("病歴")
@@ -261,35 +239,45 @@ with tab1:
             st.error("APIキーを入れてください")
         else:
             trend_str = "なし"
-            # ★この行です。ちゃんと直っています！
             hist = st.session_state['patient_db'].get(current_patient_id, [])
             
             if hist: 
                 trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
             
-            # 2. AIへのプロンプト作成
+            # --- 1. DuckDuckGoで検索実行 ---
+            search_context = ""
+            search_key = ""
+            try:
+                # 検索ワード生成
+                model_kw = genai.GenerativeModel(model_name=selected_model_name)
+                kw_res = model_kw.generate_content(f"以下の情報から医学的検索語を3つ抽出(スペース区切り)。記号不可。\n{hist_text[:100]}\n{lab_text[:100]}")
+                search_key = kw_res.text.strip()
+                
+                with st.spinner(f"検索中... ({search_key})"):
+                    with DDGS() as ddgs:
+                        results = list(ddgs.text(f"{search_key} ガイドライン", region='jp-jp', max_results=3))
+                        for i, r in enumerate(results): search_context += f"Title: {r['title']}\nURL: {r['href']}\nBody: {r['body']}\n\n"
+            except Exception as e:
+                search_context = f"(検索エラー: {e})"
+
+            # --- 2. AIへプロンプト ---
             prompt = f"""
-            以下の情報を【統合的に】分析してください。
-            【Tab 1: 病歴】{hist_text}
-            【Tab 1: 検査】{lab_text}
-            【Tab 2: トレンド】{trend_str}
-            
-            Google検索ツールを使用し、ガイドラインやエビデンスに基づいた診断を行ってください。
+            情報を統合分析せよ。
+            【病歴】{hist_text}
+            【検査】{lab_text}
+            【トレンド】{trend_str}
+            【検索結果 (Evidence)】{search_context}
             """
             
             content = [prompt]
             if up_file:
                 for f in up_file: content.append(Image.open(f))
 
-            # 3. AI実行
             try:
+                # 3. AI実行
                 model = genai.GenerativeModel(model_name=selected_model_name, system_instruction=KUSANO_BRAIN)
-                
-                with st.spinner("思考中... (Google検索で裏付け確認中)"):
-                    res = model.generate_content(
-                        content,
-                        tools=[{"google_search": {}}]
-                    )
+                with st.spinner("診断推論中..."):
+                    res = model.generate_content(content)
                 
                 # --- 結果のパースと表示 ---
                 raw = res.text
@@ -314,10 +302,8 @@ with tab1:
                     fact_content = parts_fact[1].split("---SECTION")[0].strip()
                     with st.expander("📚 エビデンス・参照データ (Fact)"):
                         st.markdown(fact_content)
-                        if res.candidates[0].grounding_metadata.search_entry_point:
-                            st.divider()
-                            st.caption("🌐 Google Search Source:")
-                            st.write(res.candidates[0].grounding_metadata.search_entry_point.rendered_content)
+                        if search_context and "エラー" not in search_context:
+                             st.text(search_context)
 
                 if "---SECTION" not in raw: st.write(raw)
                 
