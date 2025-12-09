@@ -18,11 +18,11 @@ st.markdown(f"""
     }}
     .block-container {{ padding-bottom: 80px; }}
     </style>
-    <div class="footer">K's Research Assistant | Smart Search Edition</div>
+    <div class="footer">K's Research Assistant | Direct Mode</div>
     """, unsafe_allow_html=True)
 
 st.title("🎓 K's Research Assistant")
-st.caption("研究・論文検索支援システム (AIキーワード生成機能搭載)")
+st.caption("研究・論文検索支援システム (完全入力通り検索)")
 
 # ==========================================
 # 1. サイドバー
@@ -31,14 +31,23 @@ selected_model_name = None
 
 with st.sidebar:
     st.header("⚙️ 設定")
-    api_key = st.secrets.get("GEMINI_API_KEY", None)
-    if not api_key:
+    try:
+        api_key = st.secrets.get("GEMINI_API_KEY_RESEARCH", None) # 研究用キー優先
+        if not api_key:
+            api_key = st.secrets.get("GEMINI_API_KEY", None) # なければ医療用
+        
+        if not api_key:
+            api_key = st.text_input("Gemini API Key", type="password")
+        else:
+            st.success("API Key Loaded!")
+    except:
         api_key = st.text_input("Gemini API Key", type="password")
-    
+
     if api_key:
         genai.configure(api_key=api_key)
         try:
             model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            # Flash優先
             default_index = 0
             for i, m_name in enumerate(model_list):
                 if "gemini-1.5-flash" in m_name:
@@ -53,118 +62,83 @@ with st.sidebar:
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.subheader("📌 研究テーマ")
+    st.subheader("📌 研究テーマ・背景")
     my_theme = st.text_area(
-        "研究の背景・目的",
-        height=200,
-        value="災害時停電下において、車のシガーソケット(DC12V)からインバータを介して「人工呼吸器」と「吸引機」を同時稼働させる際の安全性評価。"
+        "AIに伝えたい背景（検索には使いません）",
+        height=150,
+        value="AIの医療実装における課題と解決策の調査。特にハルシネーション対策とHuman-in-the-loopの重要性について。"
     )
 
 with col2:
-    st.subheader("🔎 知りたいこと")
+    st.subheader("🔎 検索キーワード")
     search_query = st.text_area(
-        "検索したい内容",
-        height=200,
-        value="車載インバータ 医療機器 適合性\n人工呼吸器 電圧降下"
+        "DuckDuckGoで検索するワード (入力通りに検索します)",
+        height=150,
+        value="DECIDE-AI clinical implementation nature"
     )
 
 # ==========================================
-# 3. 分析ロジック (診断アプリと同じ「AIキーワード生成」を採用)
+# 3. 分析ロジック (Direct Search)
 # ==========================================
-if st.button("🚀 検索 & 分析開始", type="primary"):
+if st.button("🚀 そのまま検索 & 分析", type="primary"):
     if not api_key:
         st.error("APIキーを入れてください")
-        st.stop()
-
-    search_context = ""
-    status_text = st.empty()
-
-    # ------------------------------------------------
-    # STEP 1: AIによる検索キーワードの生成 (ここが重要！)
-    # ------------------------------------------------
-    status_text.info("🤖 最適な検索ワードを思考中...")
-    
-    try:
-        model_kw = genai.GenerativeModel(selected_model_name)
-        # 診断アプリと同じロジック：検索エンジンが理解しやすい単語に変換させる
-        kw_prompt = f"""
-        以下の研究テーマと疑問点から、DuckDuckGoなどの検索エンジンで論文や仕様書ヒットしやすい
-        「検索キーワード」を3つ〜4つ作成し、スペース区切りで出力してください。
+    else:
+        search_context = ""
         
-        テーマ: {my_theme}
-        疑問: {search_query}
+        # ★ここが修正点：勝手に文字を足さない！入力そのままで検索！
+        raw_query = search_query.replace("\n", " ").strip()
         
-        条件: 余計な記号は含めない。英語の専門用語を含めると精度が上がる。
-        出力例: 車載インバータ 正弦波 矩形波 医療機器
+        try:
+            # 1. 検索実行 (DuckDuckGo - HTMLモード)
+            with st.spinner(f"検索中... 「{raw_query}」"):
+                with DDGS() as ddgs:
+                    # まず日本・世界共通で広く探す (wt-wt)
+                    # ブロック回避のため backend='html'
+                    results = list(ddgs.text(raw_query, region='wt-wt', max_results=5, backend='html'))
+                    
+                    if not results:
+                        st.error("❌ 検索結果が見つかりませんでした。キーワードの綴りを確認してください。")
+                        st.stop()
+
+                    for i, r in enumerate(results):
+                        search_context += f"【文献{i+1}】\nTitle: {r['title']}\nURL: {r['href']}\nSummary: {r['body']}\n\n"
+
+        except Exception as e:
+            st.error(f"検索システムエラー: {e}")
+            st.stop()
+
+        # 2. 分析実行 (AI)
+        prompt = f"""
+        あなたは優秀な大学院生の研究パートナーです。
+        以下の検索結果を読み込み、「ユーザーの研究テーマ」に対する有用性を分析してください。
+
+        【ユーザーの研究テーマ】{my_theme}
+        【検索キーワード】{raw_query}
+        【検索結果リスト】
+        {search_context}
+
+        【命令】
+        1. 検索結果に含まれる情報を事実として扱うこと。
+        2. 論文や記事が見つかった場合、その概要と研究への活かし方を解説すること。
+
+        【出力フォーマット】
+        ## 📊 検索結果レポート
+        ### 1. ヒットした主要文献
+        - **[タイトル]** (URL)
+            - 📝 **要約**: 
+        ### 2. 研究への活用ポイント
         """
-        kw_res = model_kw.generate_content(kw_prompt)
-        # 生成されたキーワード + おまじない
-        final_keywords = kw_res.text.strip().replace("\n", " ") + " 論文 specifications"
         
-    except Exception as e:
-        st.error(f"キーワード生成エラー: {e}")
-        st.stop()
-
-    # ------------------------------------------------
-    # STEP 2: 検索実行 (シンプル呼び出し)
-    # ------------------------------------------------
-    status_text.info(f"🔍 検索中... [{final_keywords}]")
-    
-    try:
-        with DDGS() as ddgs:
-            # 診断アプリと同じシンプルな呼び出し方
-            results = list(ddgs.text(final_keywords, region='jp-jp', max_results=5))
+        try:
+            model = genai.GenerativeModel(selected_model_name)
+            with st.spinner("分析中..."):
+                response = model.generate_content(prompt)
             
-            # 結果ゼロならワールドワイド
-            if not results:
-                status_text.warning("🇯🇵 国内ヒットなし... 🌏 世界検索に切り替えます")
-                time.sleep(1)
-                results = list(ddgs.text(final_keywords, region='wt-wt', max_results=5))
+            st.markdown(response.text)
+            
+            with st.expander("📚 参照した文献ソース (Raw Data)"):
+                st.text(search_context)
 
-            if not results:
-                st.error(f"❌ '{final_keywords}' で検索しましたが、結果が見つかりませんでした。")
-                st.stop()
-
-            for i, r in enumerate(results):
-                title = r.get('title', 'No Title')
-                href = r.get('href', '#')
-                body = r.get('body', r.get('snippet', 'No Content'))
-                search_context += f"【文献{i+1}】\nTitle: {title}\nURL: {href}\nSummary: {body}\n\n"
-
-    except Exception as e:
-        st.error(f"検索システムエラー: {e}")
-        st.stop()
-
-    # ------------------------------------------------
-    # STEP 3: 分析実行
-    # ------------------------------------------------
-    status_text.success("✅ 文献取得完了！分析を開始します...")
-    
-    prompt = f"""
-    あなたは優秀な大学院生の研究パートナー（臨床工学技士の視点あり）です。
-    以下の情報を統合分析してください。
-
-    【研究テーマ】{my_theme}
-    【検索キーワード】{final_keywords}
-    【検索結果】{search_context}
-
-    【命令】
-    1. 検索結果を基に、インバータ使用時の「波形の問題（正弦波 vs 矩形波/調整矩形波）」と「電力容量/突入電流」について解説してください。
-    2. 人工呼吸器や吸引機が停止するリスクシナリオを具体的に挙げてください。
-    3. 次に行うべき実機検証の実験項目を提案してください。
-    """
-    
-    try:
-        model = genai.GenerativeModel(selected_model_name)
-        with st.spinner("執筆中..."):
-            response = model.generate_content(prompt)
-        
-        status_text.empty()
-        st.markdown("### 📊 分析レポート")
-        st.write(response.text)
-        
-        with st.expander("📚 参照したWebソース"):
-            st.text(search_context)
-
-    except Exception as e:
-        st.error(f"AI生成エラー: {e}")
+        except Exception as e:
+            st.error(f"AIエラー: {e}")
