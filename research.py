@@ -17,11 +17,11 @@ st.markdown(f"""
     }}
     .block-container {{ padding-bottom: 80px; }}
     </style>
-    <div class="footer">K's Research Assistant | Proven Stability Ver.</div>
+    <div class="footer">K's Research Assistant | Global Academic Mode</div>
     """, unsafe_allow_html=True)
 
 st.title("🎓 K's Research Assistant")
-st.caption("研究・論文検索支援システム (医療アプリ同等ロジック)")
+st.caption("研究・論文検索支援システム (全世界対応版)")
 
 # ==========================================
 # 1. サイドバー
@@ -31,11 +31,11 @@ selected_model_name = None
 with st.sidebar:
     st.header("⚙️ 設定")
     try:
-        # 研究用キーがあれば優先、なければ医療用
+        # 研究用キーがあれば優先
         api_key = st.secrets.get("GEMINI_API_KEY_RESEARCH", None)
         if not api_key:
             api_key = st.secrets.get("GEMINI_API_KEY", None)
-            
+        
         if not api_key:
             api_key = st.text_input("Gemini API Key", type="password")
         else:
@@ -72,13 +72,13 @@ with col1:
 with col2:
     st.subheader("🔎 検索キーワード")
     search_query = st.text_area(
-        "検索したい単語 (スペース区切り)",
+        "検索したい単語 (英語論文なら英語で)",
         height=200,
         value="DECIDE-AI clinical implementation nature"
     )
 
 # ==========================================
-# 3. 分析ロジック (医療アプリの成功ロジック)
+# 3. 分析ロジック (世界検索・直球版)
 # ==========================================
 if st.button("🚀 検索 & 分析開始", type="primary"):
     if not api_key:
@@ -86,26 +86,19 @@ if st.button("🚀 検索 & 分析開始", type="primary"):
     else:
         search_context = ""
         
-        # 1. 検索ワードの整形 (Pythonで確実に作る)
-        # 余計な文字を消して、「論文」という言葉を足す
-        clean_query = search_query.replace("\n", " ").strip()
-        final_query = f"{clean_query} 論文" 
+        # ★修正：入力された文字をそのまま使う（勝手に加工しない）
+        final_query = search_query.strip()
         
         try:
-            # 2. 検索実行 (DuckDuckGo / HTMLモード)
-            # これが一番ブロックされにくい最強の設定です
-            with st.spinner(f"文献検索中... ({final_query})"):
+            # ★修正：最初から「世界全体 (wt-wt)」で探す
+            # これなら英語論文も、日本の論文も両方ヒットします
+            with st.spinner(f"世界中の文献を検索中... ({final_query})"):
                 with DDGS() as ddgs:
-                    # 日本限定
-                    results = list(ddgs.text(final_query, region='jp-jp', max_results=5, backend='html'))
+                    # HTMLモードでブロック回避しつつ、地域制限なしで検索
+                    results = list(ddgs.text(final_query, region='wt-wt', max_results=5, backend='html'))
                     
-                    # 0件なら世界検索 (リカバリー)
                     if not results:
-                        st.warning("国内で見つからなかったので、世界中の論文を探します...")
-                        results = list(ddgs.text(clean_query, region='wt-wt', max_results=5, backend='html'))
-
-                    if not results:
-                        st.error("❌ 検索結果が見つかりませんでした。キーワードを短くしてみてください。")
+                        st.error("❌ 検索結果が見つかりませんでした。キーワードの綴りを確認してください。")
                         st.stop()
 
                     for i, r in enumerate(results):
@@ -115,7 +108,7 @@ if st.button("🚀 検索 & 分析開始", type="primary"):
             st.error(f"検索システムエラー: {e}")
             st.stop()
 
-        # 3. 分析実行 (AI)
+        # 分析実行 (AI)
         prompt = f"""
         あなたは優秀な大学院生の研究パートナーです。
         以下の検索結果を読み込み、「ユーザーの研究テーマ」に対する有用性を分析してください。
@@ -124,14 +117,15 @@ if st.button("🚀 検索 & 分析開始", type="primary"):
         {my_theme}
 
         【検索キーワード】
-        {clean_query}
+        {final_query}
 
         【検索された文献リスト】
         {search_context}
 
         【命令】
         1. 検索結果に含まれる情報を事実として扱うこと。
-        2. 論文や記事が見つかった場合、その概要と研究への活かし方を解説すること。
+        2. 英語の文献であっても、解説は日本語で行うこと。
+        3. 論文が見つかった場合は、その要点と研究への活かし方を解説すること。
 
         【出力フォーマット】
         ## 📊 検索結果レポート
