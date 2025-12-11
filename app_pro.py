@@ -8,20 +8,20 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (Dark Medical Cockpit Final)
+# 0. アプリ設定 & MERA仕様デザイン (Dark Medical Cockpit Final V2.6)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🫀")
 
-# --- CSS: 医療用モニター風のUI/UX（視認性最適化済） ---
+# --- CSS: 医療用モニター風のUI/UX（視認性・コントラスト完全修正版） ---
 st.markdown(f"""
     <style>
     /* 全体背景：漆黒 */
     .stApp {{ background-color: #000000; color: #FFFFFF; }}
     
-    /* 文字の視認性確保 */
+    /* 基本テキスト */
     h1, h2, h3, h4, h5, h6, p, li, span, div {{ color: #E0E0E0 !important; }}
     label, .stTextInput label, .stNumberInput label, .stTextArea label {{ color: #FFFFFF !important; font-weight: bold !important; }}
     
@@ -38,11 +38,38 @@ st.markdown(f"""
     div[data-testid="metric-container"] label {{ color: #AAAAAA !important; }}
     div[data-testid="metric-container"] div[data-testid="stMetricValue"] {{ color: #00FFFF !important; }}
     
-    /* 入力ボックス */
+    /* 入力ボックス & セレクトボックスの強制ダークモード化 */
     .stNumberInput input, .stTextInput input, .stTextArea textarea {{
         background-color: #222222 !important; color: #FFFFFF !important; border: 1px solid #555 !important;
     }}
     
+    /* Multiselect (選択ボックス) の視認性修正 */
+    div[data-baseweb="select"] > div {{
+        background-color: #222222 !important;
+        color: #FFFFFF !important;
+        border-color: #555 !important;
+    }}
+    /* 選択されたタグ (Chips) */
+    div[data-baseweb="tag"] {{
+        background-color: #333333 !important;
+        border: 1px solid #00FFFF !important;
+    }}
+    div[data-baseweb="tag"] span {{
+        color: #FFFFFF !important;
+    }}
+    /* ドロップダウンメニューの中身 */
+    div[role="listbox"] ul {{
+        background-color: #111111 !important;
+    }}
+    div[role="option"] {{
+        color: #EEEEEE !important;
+        background-color: #111111 !important;
+    }}
+    /* 選択肢の文字色強制 */
+    .stMultiSelect span {{
+        color: #FFFFFF !important;
+    }}
+
     /* フッター */
     .footer {{
         position: fixed; left: 0; bottom: 0; width: 100%;
@@ -134,7 +161,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v2.4 (FCCS)")
+    st.caption("STATUS: PROTOTYPE v2.6 (FCCS)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -162,9 +189,9 @@ with st.sidebar:
         st.error(f"⚠️ SIMULATION MODE: {current_patient_id}")
         if not st.session_state['demo_active']:
             st.session_state['patient_db'][current_patient_id] = [
-                {"Time": "10:00", "P/F": 120, "DO2": 450, "O2ER": 35, "Lactate": 4.5, "Hb": 9.0, "pH": 7.25, "SvO2": 65},
-                {"Time": "11:00", "P/F": 110, "DO2": 420, "O2ER": 40, "Lactate": 5.2, "Hb": 8.8, "pH": 7.21, "SvO2": 62},
-                {"Time": "12:00", "P/F": 95,  "DO2": 380, "O2ER": 45, "Lactate": 6.8, "Hb": 8.5, "pH": 7.15, "SvO2": 58}
+                {"Time": "10:00", "P/F": 120, "DO2": 450, "O2ER": 35, "Lactate": 4.5, "Hb": 9.0, "pH": 7.25, "SvO2": 65, "Na": 138, "Cl": 105, "HCO3": 22, "Alb": 3.8},
+                {"Time": "11:00", "P/F": 110, "DO2": 420, "O2ER": 40, "Lactate": 5.2, "Hb": 8.8, "pH": 7.21, "SvO2": 62, "Na": 137, "Cl": 108, "HCO3": 18, "Alb": 3.7},
+                {"Time": "12:00", "P/F": 95,  "DO2": 380, "O2ER": 45, "Lactate": 6.8, "Hb": 8.5, "pH": 7.15, "SvO2": 58, "Na": 135, "Cl": 110, "HCO3": 14, "Alb": 3.5}
             ]
             st.session_state['demo_active'] = True
     else:
@@ -205,7 +232,7 @@ tab1, tab2 = st.tabs(["📝 CLINICAL DIAGNOSIS", "📈 VITAL TRENDS"])
 with tab2:
     st.markdown("#### 🏥 Bedside Monitor Input")
     
-    # 入力フォーム (SvO2を追加)
+    # 入力フォーム
     c1, c2, c3 = st.columns(3)
     pao2 = c1.number_input("PaO2", step=1.0)
     fio2 = c1.number_input("FiO2 (%)", step=1.0)
@@ -256,30 +283,40 @@ with tab2:
             "Time": datetime.now().strftime("%H:%M:%S"),
             "P/F": pf, "DO2": do2, "O2ER": o2er, 
             "Lactate": lac, "Hb": hb, "pH": ph, "SvO2": svo2,
-            "AG": c_ag if c_ag else ag
+            "AG": c_ag if c_ag else ag,
+            "Na": na, "Cl": cl, "HCO3": hco3, "Alb": alb,
+            "CO": co, "SpO2": spo2, "PaO2": pao2, "FiO2": fio2
         }
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
     
-    # --- グラフ描画 (ここがカスタマイズ機能！) ---
+    # --- グラフ描画 (全項目選択可能版) ---
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
-        # 数値変換
-        all_cols = ["P/F", "DO2", "O2ER", "Lactate", "Hb", "pH", "SvO2", "AG"]
-        for col in all_cols:
+        
+        # 入力可能な全項目リスト
+        all_possible_cols = [
+            "P/F", "DO2", "O2ER", "Lactate", "Hb", "pH", "SvO2", "AG",
+            "Na", "Cl", "HCO3", "Alb", "CO", "SpO2", "PaO2", "FiO2"
+        ]
+        
+        # データフレーム内の数値変換
+        for col in all_possible_cols:
             if col not in df.columns: df[col] = None
             df[col] = pd.to_numeric(df[col], errors='coerce')
         
         st.markdown("### 📉 CUSTOM TREND ANALYSIS")
         
-        # マルチセレクト（ユーザーが選べる）
-        # デフォルトで表示する項目: 草野スペシャル（O2ER, Lactate, SvO2）
-        default_cols = [c for c in ["SvO2", "Lactate", "O2ER"] if c in df.columns]
+        # データが存在するカラムのみを選択肢として表示
+        available_options = [c for c in all_possible_cols if df[c].notna().any()]
+        
+        # デフォルト選択 (草野スペシャル)
+        default_cols = [c for c in ["SvO2", "Lactate", "O2ER"] if c in available_options]
         
         selected_cols = st.multiselect(
-            "👇 表示したい項目を選択してください (Select Parameters to Display)",
-            options=[c for c in all_cols if df[c].notna().any()], # データがあるものだけ選択肢に出す
+            "👇 表示したい項目を選択 (Select Parameters)",
+            options=available_options,
             default=default_cols
         )
         
