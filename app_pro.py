@@ -166,4 +166,108 @@ with st.sidebar:
     st.caption("STATUS: PROTOTYPE v2.8 (Full)")
 
     try:
-        api_key = st.
+        api_key = st.secrets["GEMINI_API_KEY"]
+        st.success("🔑 SYSTEM CONNECTED")
+    except:
+        api_key = st.text_input("Gemini API Key", type="password")
+    
+    if api_key:
+        genai.configure(api_key=api_key)
+        try:
+            model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            default_index = 0
+            for i, m_name in enumerate(model_list):
+                if "gemini-1.5-pro" in m_name:
+                    default_index = i
+                    break
+            selected_model_name = st.selectbox("AI ENGINE", model_list, index=default_index)
+        except: st.error("Model Error")
+
+    st.markdown("---")
+    is_demo = st.checkbox("シミュレーション・モード起動", value=False)
+    
+    if is_demo:
+        current_patient_id = "DEMO-CASE-001"
+        st.error(f"⚠️ SIMULATION MODE: {current_patient_id}")
+        if not st.session_state['demo_active']:
+            st.session_state['patient_db'][current_patient_id] = [
+                {"Time": "10:00", "P/F": 120, "DO2": 450, "O2ER": 35, "Lactate": 4.5, "Hb": 9.0, "pH": 7.25, "SvO2": 65, "CO": 8.0, "ECMO_Flow": 3.0, "Na": 138, "Cl": 105, "HCO3": 22, "Alb": 3.8},
+                {"Time": "11:00", "P/F": 110, "DO2": 420, "O2ER": 40, "Lactate": 5.2, "Hb": 8.8, "pH": 7.21, "SvO2": 62, "CO": 9.0, "ECMO_Flow": 3.0, "Na": 137, "Cl": 108, "HCO3": 18, "Alb": 3.7},
+                {"Time": "12:00", "P/F": 95,  "DO2": 380, "O2ER": 45, "Lactate": 6.8, "Hb": 8.5, "pH": 7.15, "SvO2": 58, "CO": 10.0, "ECMO_Flow": 3.0, "Na": 135, "Cl": 110, "HCO3": 14, "Alb": 3.5}
+            ]
+            st.session_state['demo_active'] = True
+    else:
+        st.session_state['demo_active'] = False
+        patient_id_input = st.text_input("🆔 PATIENT ID", value="TEST1", max_chars=10)
+        if patient_id_input:
+            if not re.match(r'^[a-zA-Z0-9]+$', patient_id_input):
+                st.error("⚠️ Alphanumeric Only")
+            else:
+                current_patient_id = patient_id_input.upper()
+                st.success(f"LOGIN: {current_patient_id}")
+    
+    if current_patient_id and not is_demo:
+        st.markdown("---")
+        if st.button("🗑️ CLEAR HISTORY", key="del_btn"):
+            st.session_state['patient_db'][current_patient_id] = []
+            st.rerun()
+
+# ==========================================
+# 4. メイン画面
+# ==========================================
+st.title(f"🫀 {APP_TITLE}")
+
+if not current_patient_id:
+    st.info("👈 Please enter Patient ID or Start Demo Mode.")
+    st.stop()
+
+# デモ用テキスト
+default_hist = ""
+default_lab = ""
+if is_demo:
+    default_hist = "60代男性。重症肺炎によるARDS。VV-ECMO導入後だが、Sepsis進行により循環動態不安定。Lac上昇傾向。"
+    default_lab = "pH 7.15, PaO2 55, PaCO2 60, Lac 6.8, BE -10, Na 135, K 4.5, Cl 100"
+
+tab1, tab2 = st.tabs(["📝 CLINICAL DIAGNOSIS", "📈 VITAL TRENDS"])
+
+# === TAB 2: トレンド管理 (ECMO Flow & Ratio実装) ===
+with tab2:
+    st.markdown("#### 🏥 Bedside Monitor Input")
+    
+    # 入力フォーム (ECMO Flowを追加)
+    c1, c2, c3 = st.columns(3)
+    pao2 = c1.number_input("PaO2", step=1.0)
+    fio2 = c1.number_input("FiO2 (%)", step=1.0)
+    lac = c1.number_input("Lactate (mmol/L)", step=0.1)
+    
+    hb = c2.number_input("Hb (g/dL)", step=0.1)
+    co = c2.number_input("CO (L/min)", step=0.1)
+    spo2 = c2.number_input("SpO2 (%)", step=1.0)
+    
+    ph = c3.number_input("pH", step=0.01)
+    svo2 = c3.number_input("SvO2 (Pre) %", step=1.0, help="VV-ECMO時はRecirculationに注意")
+    ecmo_flow = c3.number_input("ECMO Flow (L/min)", step=0.1, help="VV-ECMO流量")
+
+    # 電解質
+    e1, e2, e3, e4 = st.columns(4)
+    na = e1.number_input("Na", step=1.0)
+    cl = e2.number_input("Cl", step=1.0)
+    hco3 = e3.number_input("HCO3", step=0.1)
+    alb = e4.number_input("Alb", step=0.1)
+
+    # 計算ロジック
+    pf, do2, o2er, ag, c_ag, flow_ratio = None, None, None, None, None, None
+    
+    if pao2 and fio2 and fio2>0: pf = pao2 / (fio2/100)
+    
+    if hb and co and spo2 and pao2:
+        cao2 = 1.34*hb*(spo2/100) + 0.0031*pao2
+        do2 = co*cao2*10
+        if svo2:
+            cvo2 = 1.34*hb*(svo2/100) + 0.0031*40
+            vo2 = co*(cao2-cvo2)*10
+            if do2 and do2>0: o2er = (vo2/do2)*100
+    
+    if na and cl and hco3:
+        ag = na - (cl + hco3)
+        if alb:
