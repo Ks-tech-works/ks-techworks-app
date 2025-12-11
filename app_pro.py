@@ -163,7 +163,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v2.8 (Full)")
+    st.caption("STATUS: PROTOTYPE v2.8 (Strict Fix)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -230,7 +230,7 @@ if is_demo:
 
 tab1, tab2 = st.tabs(["📝 CLINICAL DIAGNOSIS", "📈 VITAL TRENDS"])
 
-# === TAB 2: トレンド管理 (ECMO Flow & Ratio実装) ===
+# === TAB 2: トレンド管理 (計算ロジック修正済み) ===
 with tab2:
     st.markdown("#### 🏥 Bedside Monitor Input")
     
@@ -255,10 +255,11 @@ with tab2:
     hco3 = e3.number_input("HCO3", step=0.1)
     alb = e4.number_input("Alb", step=0.1)
 
-    # 計算ロジック
+    # 計算ロジック (インデント修正済み)
     pf, do2, o2er, ag, c_ag, flow_ratio = None, None, None, None, None, None
     
-    if pao2 and fio2 and fio2>0: pf = pao2 / (fio2/100)
+    if pao2 and fio2 and fio2>0:
+        pf = pao2 / (fio2/100)
     
     if hb and co and spo2 and pao2:
         cao2 = 1.34*hb*(spo2/100) + 0.0031*pao2
@@ -266,8 +267,158 @@ with tab2:
         if svo2:
             cvo2 = 1.34*hb*(svo2/100) + 0.0031*40
             vo2 = co*(cao2-cvo2)*10
-            if do2 and do2>0: o2er = (vo2/do2)*100
+            if do2 and do2>0:
+                o2er = (vo2/do2)*100
     
     if na and cl and hco3:
         ag = na - (cl + hco3)
         if alb:
+            c_ag = ag + 2.5 * (4.0 - alb)
+    
+    # ECMO Flow Ratio (The 60% Rule)
+    if co and ecmo_flow and co > 0:
+        flow_ratio = (ecmo_flow / co) * 100
+
+    # プレビュー
+    if pf or do2 or o2er or ag:
+        st.markdown("---")
+        cols = st.columns(5)
+        cols[0].metric("P/F", f"{pf:.0f}" if pf else "-")
+        cols[1].metric("DO2", f"{do2:.0f}" if do2 else "-")
+        cols[2].metric("O2ER", f"{o2er:.1f}%" if o2er else "-")
+        cols[3].metric("AG(c)", f"{c_ag:.1f}" if c_ag else (f"{ag:.1f}" if ag else "-"))
+        
+        # Flow Ratio 表示
+        if flow_ratio:
+            ratio_label = "Flow/CO Ratio"
+            ratio_val = f"{flow_ratio:.0f}%"
+            ratio_delta = "Capture OK" if flow_ratio >= 60 else "⚠️ High Shunt"
+            delta_color = "normal" if flow_ratio >= 60 else "inverse"
+            cols[4].metric(ratio_label, ratio_val, ratio_delta, delta_color=delta_color)
+
+    if st.button("💾 SAVE DATA"):
+        if current_patient_id not in st.session_state['patient_db']: 
+            st.session_state['patient_db'][current_patient_id] = []
+        
+        record = {
+            "Time": datetime.now().strftime("%H:%M:%S"),
+            "P/F": pf, "DO2": do2, "O2ER": o2er, 
+            "Lactate": lac, "Hb": hb, "pH": ph, "SvO2": svo2,
+            "AG": c_ag if c_ag else ag,
+            "Na": na, "Cl": cl, "HCO3": hco3, "Alb": alb,
+            "CO": co, "SpO2": spo2, "PaO2": pao2, "FiO2": fio2,
+            "ECMO_Flow": ecmo_flow, "Flow_Ratio": flow_ratio
+        }
+        st.session_state['patient_db'][current_patient_id].append(record)
+        st.rerun()
+    
+    # --- グラフ描画 (全項目選択可能版) ---
+    hist = st.session_state['patient_db'].get(current_patient_id, [])
+    if hist:
+        df = pd.DataFrame(hist)
+        
+        # 入力可能な全項目リスト
+        all_possible_cols = [
+            "P/F", "DO2", "O2ER", "Lactate", "Hb", "pH", "SvO2", "AG",
+            "Na", "Cl", "HCO3", "Alb", "CO", "SpO2", "PaO2", "FiO2",
+            "ECMO_Flow", "Flow_Ratio"
+        ]
+        
+        # データフレーム内の数値変換
+        for col in all_possible_cols:
+            if col not in df.columns: df[col] = None
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        st.markdown("### 📉 CUSTOM TREND ANALYSIS")
+        
+        # データが存在するカラムのみを選択肢として表示
+        available_options = [c for c in all_possible_cols if df[c].notna().any()]
+        
+        # デフォルト選択 (草野スペシャル)
+        default_cols = [c for c in ["SvO2", "Lactate", "O2ER"] if c in available_options]
+        
+        selected_cols = st.multiselect(
+            "👇 表示したい項目を選択 (Select Parameters)",
+            options=available_options,
+            default=default_cols
+        )
+        
+        if selected_cols:
+            st.line_chart(df.set_index("Time")[selected_cols])
+            st.caption(f"Displaying: {', '.join(selected_cols)}")
+        else:
+            st.info("上のボックスから表示したい項目を選んでください。")
+
+# === TAB 1: 総合診断 ===
+with tab1:
+    col1, col2 = st.columns(2)
+    hist_text = col1.text_area("Patient History", value=default_hist, height=150)
+    lab_text = col1.text_area("Lab Data / Parameters", value=default_lab, height=150)
+    up_file = col2.file_uploader("Upload Image", accept_multiple_files=True)
+
+    st.markdown("---")
+    if st.button("🚀 EXECUTE AI DIAGNOSIS", type="primary"):
+        if not api_key:
+            st.error("⚠️ NO API KEY")
+        else:
+            trend_str = "No Data"
+            hist = st.session_state['patient_db'].get(current_patient_id, [])
+            if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
+            
+            # 1. Search
+            search_context = ""
+            try:
+                model_kw = genai.GenerativeModel(model_name=selected_model_name)
+                kw_prompt = f"Extract 3 medical keywords (space separated) for ICU patient search:\n{hist_text[:200]}\n{lab_text[:200]}"
+                kw_res = model_kw.generate_content(kw_prompt)
+                search_key = kw_res.text.strip()
+                
+                with st.spinner(f"🌐 Searching Evidence: {search_key}..."):
+                    with DDGS() as ddgs:
+                        results = list(ddgs.text(f"{search_key} guideline intensive care", region='jp-jp', max_results=3))
+                        for r in results: search_context += f"Title: {r['title']}\nURL: {r['href']}\nBody: {r['body']}\n\n"
+            except Exception as e: search_context = f"Search Error: {e}"
+
+            # 2. Prompt
+            prompt = f"""
+            Analyze the ICU patient data.
+            【History】{hist_text}
+            【Labs】{lab_text}
+            【Trend Data】{trend_str}
+            【Search Evidence】{search_context}
+            """
+            
+            content = [prompt]
+            if up_file:
+                for f in up_file: content.append(Image.open(f))
+
+            try:
+                model = genai.GenerativeModel(model_name=selected_model_name, system_instruction=KUSANO_BRAIN)
+                with st.spinner("🧠 KUSANO_BRAIN is thinking..."):
+                    res = model.generate_content(content)
+                
+                # Result Parsing
+                raw = res.text
+                parts_emer = raw.split("---SECTION_PLAN_EMERGENCY---")
+                parts_ai   = raw.split("---SECTION_AI_OPINION---")
+                parts_rout = raw.split("---SECTION_PLAN_ROUTINE---")
+                parts_fact = raw.split("---SECTION_FACT---")
+
+                st.success("✅ Analysis Complete")
+
+                if len(parts_emer) > 1:
+                    st.error(f"🚨 **EMERGENCY ACTION (Do Now)**\n\n{parts_emer[1].split('---SECTION')[0].strip()}", icon="⚡")
+                if len(parts_ai) > 1:
+                    st.warning(f"🤔 **CLINICAL REASONING (The Art of ICU)**\n\n{parts_ai[1].split('---SECTION')[0].strip()}", icon="🧠")
+                if len(parts_rout) > 1:
+                    st.info(f"✅ **MANAGEMENT PLAN (Do Next)**\n\n{parts_rout[1].split('---SECTION')[0].strip()}", icon="📋")
+                if len(parts_fact) > 1:
+                    with st.expander("📚 Evidence & References"):
+                        st.markdown(parts_fact[1].split('---SECTION')[0].strip())
+                        if search_context and "Error" not in search_context:
+                             st.divider()
+                             st.text("Raw Search Results:\n" + search_context)
+                
+                if "---SECTION" not in raw: st.write(raw)
+
+            except Exception as e: st.error(f"System Error: {e}")
