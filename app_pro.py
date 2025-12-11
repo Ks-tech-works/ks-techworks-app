@@ -8,26 +8,42 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (Dark Medical Cockpit)
+# 0. アプリ設定 & MERA仕様デザイン (Dark Medical Cockpit V2.1)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🫀")
 
-# --- CSS: 医療用モニター風のUI/UX ---
+# --- CSS: 医療用モニター風のUI/UX（視認性修正版） ---
 st.markdown(f"""
     <style>
     /* 全体背景：漆黒 */
     .stApp {{
         background-color: #000000;
-        color: #E0E0E0;
+        color: #FFFFFF;
     }}
-    /* サイドバー：ダークグレー */
+    
+    /* 文字が見えない問題の修正：全テキスト要素を強制的に白くする */
+    h1, h2, h3, h4, h5, h6, p, li, span, div {{
+        color: #E0E0E0 !important;
+    }}
+    
+    /* 入力フォームのラベルをハッキリ白く */
+    label, .stTextInput label, .stNumberInput label, .stTextArea label, .stFileUploader label, .stSelectbox label {{
+        color: #FFFFFF !important;
+        font-weight: bold !important;
+    }}
+    
+    /* サイドバーの修正 */
     [data-testid="stSidebar"] {{
         background-color: #111111;
         border-right: 1px solid #333;
     }}
+    [data-testid="stSidebar"] * {{
+        color: #CCCCCC !important;
+    }}
+
     /* メトリックカード（数値表示部） */
     div[data-testid="metric-container"] {{
         background-color: #1E1E1E;
@@ -36,28 +52,37 @@ st.markdown(f"""
         border-radius: 5px;
         box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
     }}
-    /* 数値の文字色：ネオンシアン */
     div[data-testid="metric-container"] label {{
-        color: #AAAAAA;
+        color: #AAAAAA !important; /* ラベルは少し暗くして数値を際立たせる */
     }}
     div[data-testid="metric-container"] div[data-testid="stMetricValue"] {{
-        color: #00FFFF;
-        font-family: 'Courier New', monospace;
-        font-weight: bold;
+        color: #00FFFF !important; /* 数値はネオンシアン */
     }}
-    /* 警告系のアラートを目立たせる */
+    
+    /* 入力ボックスの中身を見やすく（ダークグレー背景＋白文字） */
+    .stNumberInput input, .stTextInput input, .stTextArea textarea {{
+        background-color: #222222 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #555 !important;
+    }}
+    
+    /* アラートの見栄え */
     .stAlert {{
-        background-color: #220000;
+        background-color: #330000;
         border: 1px solid #FF0000;
-        color: #FFDDDD;
     }}
+    .stAlert * {{
+        color: #FFDDDD !important;
+    }}
+    
     /* フッター */
     .footer {{
         position: fixed; left: 0; bottom: 0; width: 100%;
-        background-color: #000000; color: #555;
+        background-color: #000000; color: #555 !important;
         text-align: center; padding: 5px; font-size: 12px;
         border-top: 1px solid #333; z-index: 100; font-family: sans-serif;
     }}
+    .footer * {{ color: #555 !important; }}
     .block-container {{ padding-bottom: 80px; }}
     </style>
     <div class="footer">SYSTEM: {APP_TITLE} | ARCHITECT: SHINGO KUSANO | {COMPANY_NAME}</div>
@@ -142,7 +167,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v2.0")
+    st.caption("STATUS: PROTOTYPE v2.1")
 
     # --- API Key Logic ---
     try:
@@ -220,7 +245,7 @@ tab1, tab2 = st.tabs(["📝 CLINICAL DIAGNOSIS", "📈 VITAL TRENDS"])
 with tab2:
     st.markdown("#### 🏥 Bedside Monitor Input")
     
-    # 入力フォーム (デモ時はあえて空欄にして、入力するふりができる)
+    # 入力フォーム
     c1, c2, c3 = st.columns(3)
     pao2 = c1.number_input("PaO2", step=1.0)
     fio2 = c1.number_input("FiO2 (%)", step=1.0)
