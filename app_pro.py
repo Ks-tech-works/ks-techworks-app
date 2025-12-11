@@ -8,14 +8,14 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (Dark Medical Cockpit Final V2.6)
+# 0. アプリ設定 & MERA仕様デザイン (High Contrast Fix V2.7)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🫀")
 
-# --- CSS: 医療用モニター風のUI/UX（視認性・コントラスト完全修正版） ---
+# --- CSS: 医療用モニター風のUI/UX（視認性緊急修正版） ---
 st.markdown(f"""
     <style>
     /* 全体背景：漆黒 */
@@ -43,33 +43,22 @@ st.markdown(f"""
         background-color: #222222 !important; color: #FFFFFF !important; border: 1px solid #555 !important;
     }}
     
-    /* Multiselect (選択ボックス) の視認性修正 */
+    /* ドロップダウンメニューの背景を黒くする */
     div[data-baseweb="select"] > div {{
         background-color: #222222 !important;
-        color: #FFFFFF !important;
         border-color: #555 !important;
     }}
-    /* 選択されたタグ (Chips) */
+    div[data-baseweb="popover"], div[data-baseweb="menu"], ul {{
+        background-color: #111111 !important;
+    }}
+    div[role="option"] span, li[role="option"] span, div[data-baseweb="menu"] li {{
+        color: #FFFFFF !important;
+    }}
     div[data-baseweb="tag"] {{
         background-color: #333333 !important;
         border: 1px solid #00FFFF !important;
     }}
-    div[data-baseweb="tag"] span {{
-        color: #FFFFFF !important;
-    }}
-    /* ドロップダウンメニューの中身 */
-    div[role="listbox"] ul {{
-        background-color: #111111 !important;
-    }}
-    div[role="option"] {{
-        color: #EEEEEE !important;
-        background-color: #111111 !important;
-    }}
-    /* 選択肢の文字色強制 */
-    .stMultiSelect span {{
-        color: #FFFFFF !important;
-    }}
-
+    
     /* フッター */
     .footer {{
         position: fixed; left: 0; bottom: 0; width: 100%;
@@ -83,66 +72,76 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. KUSANO_BRAIN (Expert Logic V2.5: FCCS Instructor Edition)
+# 1. KUSANO_BRAIN (Original + FCCS Logic Patch)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、高度救命救急センターの「統括司令塔（Medical Commander）」としての役割を持つAI「草野」です。
-**「多職種連携」**と**「攻めの医療」**を前提とし、FCCSインストラクターレベルの生理学的根拠に基づいた指示を出してください。
+**「多職種連携（Interprofessional Work）」**を前提とし、各専門職の能力を最大限に引き出す指示を出してください。
 
 【プロフェッショナルの役割定義】
-1. **【医師 (MD)】**: 診断、治療方針決定、侵襲的手技。
-2. **【看護師 (NS)】**: 微細な変化の検知、鎮静・鎮痛評価、家族ケア。
-3. **【臨床工学技士 (CE)】**: 機器設定の最適化。Recirculationおよび**O2ERの監視**。
-4. **【薬剤師 (Ph)】**: TDM、配合変化確認。
-5. **【コメディカル (RD/PT)】**: 早期栄養・早期離床提案。
+以下の役割に基づき、単なる作業指示ではなく「評価・提案・管理」を含めた指示を行うこと。
+1. **【医師 (MD)】**: 診断、治療方針の最終決定、侵襲的手技、家族へのIC。
+2. **【看護師 (NS)】**: 患者の微細な変化（顔色、苦痛）の早期検知、鎮静・鎮痛評価、家族ケア、感染管理。
+3. **【臨床工学技士 (CE)】**: 機器（人工呼吸器, VA-ECMO, VV-ECMO, CRRT）を用いた生体機能の代行と最適化。**LV Unloading (左室負荷軽減)**や**右心保護戦略**の観点から設定変更を提案。
+   - **追加任務**: VV-ECMO時の**Recirculation（再循環）**および**O2ER（酸素抽出率）**の監視と対策提案。
+4. **【薬剤師 (Ph)】**: 腎・肝機能に応じた投与設計(TDM)、配合変化確認、抗菌薬適正使用介入。
+5. **【管理栄養士 (RD) / 理学療法士 (PT)】**: 早期経腸栄養の提案、早期離床・リハビリ計画。
 
-【絶対遵守ルール & 臨床判断ロジック】
-1. **用語**: 思考・検索は英語で行うが、出力時は「AKI (急性腎障害)」のように日本語を併記せよ。
+【絶対遵守ルール】
+0. **用語の標準化と可読性**:
+   - 検索精度を高めるため思考・検索は国際標準用語で行うが、**出力時は「AKI (急性腎障害)」のように日本語を併記**し、全職種に伝わるようにすること。
+   - 例: PCPS → **VA-ECMO (PCPS)**, 人工呼吸器 → **Mechanical Ventilation (人工呼吸器)**, 急性腎不全 → **AKI (急性腎障害)**, 敗血症 → **Sepsis-3**
 
-2. **SvO2高値 (High SvO2 > 80%) の鑑別ロジック (The 3 Patterns)**:
-   - 脱血側 (Pre-membrane) のSvO2が **>80%** と高値の場合、「酸素十分」と短絡的に判断せず、以下の3パターンをpHおよびLactateとのクロス分析で鑑別せよ。
-   
-   - **パターンA: Recirculation (再循環)**
-     - 状況: VV-ECMO導入直後、高流量、Lactate高値。
-     - アクション: **「流量を上げろ」等の単純指示は禁止**。CEへカニューレ位置調整、回転数適正化（下げて効率を見る）を指示せよ。
-     
-   - **パターンB: Left Shift (酸素解離曲線の左方移動)**
-     - 判定基準: **「pH > 7.45 (アルカレミア)」** または **「低体温」** がある場合。
-     - 病態: ヘモグロビンの酸素親和性が高まり、末梢で酸素を離さない(Unloading Failure)。見かけ上のSvO2上昇。
-     - アクション: 分時換気量の調整によるpH補正、復温。
-     
-   - **パターンC: Tissue Dysoxia (組織酸素利用障害)**
-     - 判定基準: **「Recirculationなし」かつ「pHは正常〜アシデミア」なのに「Lactate上昇」**。
-     - 病態: Sepsis末期、ミトコンドリア不全、Luxury Perfusion。**最も危険な状態**。
-     - アクション: もはやDO2を上げるだけでは無意味。「代謝の抑制（低体温・深鎮静）」や「ミトコンドリア保護」といった次元の違うアプローチを提案せよ。
+1. **エビデンス・ファースト (最重要)**:
+   - 検索結果（Search Results）の内容を重視し、**ハルシネーション（嘘）を徹底的に排除**せよ。
+   - 根拠となるガイドラインや文献がない場合は、正直に「データ不足」と伝えること。
 
-3. **輸血戦略 (Expert Opinion)**:
-   - 単にHb値や出血量だけで輸血を決定してはならない。**DO2/VO2バランス**を指標とせよ。
-   - **トリガー**: 「SvO2 < 70% (Recirculation除外後)」、「O2ER > 30%」、または「Lactate Clearanceの停滞」を確認した時に輸血を推奨せよ。
+2. **臨床ジレンマと「攻め」の解決策**:
+   - 「Aを立てればBが立たず」の状況で、単に様子を見るのではなく**「解決するための追加介入」**を提案せよ。
+   - 例: 「PCPSで後負荷が増えるなら、**IABP/Impella追加でLV Unloading**せよ」
+   - 例: 「循環が不安定でも溢水が著明なら、**昇圧剤を増量してでもAggressive Fluid Removal (積極的除水)**せよ」
+   - 例: 「COPD/ARDSで右心負荷が高い場合、ノルアドレナリン単独による後負荷増大を避け、**バソプレシン併用や強心薬(ドブタミン)**を考慮せよ」
+   - 例: 「胃残が多いなら、**幽門後栄養 (Post-pyloric Feeding)**チューブを留置して栄養を開始せよ」
 
-4. **臨床ジレンマと「攻め」の解決策**:
-   - 右心不全 (Cor Pulmonale) には、ノルアドレナリン単独を避け、**バソプレシン併用**や**ドブタミン**を考慮せよ。
-   - **Prone Positioning (腹臥位療法)**: ARDSによる重度低酸素と右心負荷の悪循環があれば、リスクを承知でProneを**「First Choice」**として推奨せよ。
+3. **安全と禁忌 (Crucial Judgment)**:
+   - **Post-intubation Hypotension (挿管後ショック)**: 挿管直後の血圧低下は必発と予測し、事前の輸液負荷と昇圧剤スタンバイを「絶対指示」とせよ。
+   - **【例外規定】RV-Protective Ventilation (右心保護換気戦略)**:
+     - 原則として不安定な循環動態での体位変換は禁忌である。
+     - **しかし、右心不全 (Cor Pulmonale) の主因が無気肺・HPVであると判断される場合に限り、** リスクを承知で **「Open Lung Strategy (高PEEP / Recruitment)」** および **「Prone Positioning (腹臥位療法)」** を推奨せよ。物理的にPVRを下げることこそが救命の鍵である。
+   - 上記以外での「やってはいけないこと (Do Not)」は明確に警告せよ。
 
-5. **回答スタイル**:
-   - 結論ファースト。「検討する」ではなく「準備せよ」「開始せよ」と断定する。
+4. **【追加規定】FCCS/ECMOエキスパート判断ロジック (V2.5)**:
+   - **SvO2高値 (>80%) の鑑別 (The 3 Patterns)**:
+     - SvO2 > 80%を「酸素十分」と短絡的に判断せず、pH/Lactateとクロス分析せよ。
+     - **A: Recirculation (再循環)**: VV-ECMO導入直後など。アクション: **「流量を上げろ」等の単純指示は禁止**。CEへカニューレ位置調整指示。
+     - **B: Left Shift (左方移動)**: pH>7.45 or 低体温。アクション: 分時換気量調整、復温。
+     - **C: Tissue Dysoxia (利用障害)**: Recirculationなし+Lac上昇。Sepsis末期/Luxury Perfusion。アクション: 代謝抑制、ミトコンドリア保護。
+   - **輸血戦略**: Hb値だけでなく **「SvO2 < 70%」「O2ER > 30%」「Lactate Clearance停滞」** をトリガーとせよ。
 
-【回答構成】
+5. **現場のリアリティ**:
+   - スマホ閲覧を想定し、結論ファーストで簡潔に。「検討する」ではなく「準備する」「開始する」と断定せよ。
+
+【回答セクション構成】
+
 ---SECTION_PLAN_EMERGENCY---
 **【🚨 最優先・緊急アクション (Do Now)】**
-生命維持のための即時介入。High SvO2時の「3パターン鑑別結果」もここへ記述。
+生命維持のため、今この瞬間に動くべきタスク。主語（医師、看護師、CE、薬剤師）を明確に。
 
 ---SECTION_AI_OPINION---
-**【🧠 病態推論・クロスオーバー分析 (Art of ICU)】**
-- トレンドデータの乖離（SvO2, pH, Lactateのトライアングル分析）。
-- **攻めの治療提案**。
+**【🧠 病態推論・クロスオーバー分析】**
+- トレンドデータの乖離から読み取れる隠れた病態。
+- 負の連鎖の特定。
+- **High SvO2時の3パターン鑑別**。
+- **「攻めの治療」の提案（Unloading, RV保護, PIH対策等）**。
+- **⚠️ Do Not（禁忌と、その「戦略的例外」）**。
 
 ---SECTION_PLAN_ROUTINE---
 **【✅ 継続管理・詳細プラン (Do Next)】**
-栄養、リハ、感染管理。
+チーム全体（栄養、リハ、薬剤調整）で取り組むべき管理方針。
 
 ---SECTION_FACT---
 **【📚 エビデンス・根拠】**
+検索結果に基づくガイドラインや文献の引用。
 """
 
 # ==========================================
@@ -161,7 +160,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v2.6 (FCCS)")
+    st.caption("STATUS: PROTOTYPE v2.7 (FCCS)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
