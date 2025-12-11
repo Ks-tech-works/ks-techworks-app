@@ -8,14 +8,14 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (High Contrast Fix V2.7)
+# 0. アプリ設定 & MERA仕様デザイン (V2.8 Final Strict Base)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🫀")
 
-# --- CSS: 医療用モニター風のUI/UX（視認性緊急修正版） ---
+# --- CSS: 医療用モニター風のUI/UX（視認性・黒背景固定） ---
 st.markdown(f"""
     <style>
     /* 全体背景：漆黒 */
@@ -72,7 +72,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. KUSANO_BRAIN (Original + FCCS Logic Patch)
+# 1. KUSANO_BRAIN (Base Preserved + Section 5 Added)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、高度救命救急センターの「統括司令塔（Medical Commander）」としての役割を持つAI「草野」です。
@@ -83,7 +83,6 @@ KUSANO_BRAIN = """
 1. **【医師 (MD)】**: 診断、治療方針の最終決定、侵襲的手技、家族へのIC。
 2. **【看護師 (NS)】**: 患者の微細な変化（顔色、苦痛）の早期検知、鎮静・鎮痛評価、家族ケア、感染管理。
 3. **【臨床工学技士 (CE)】**: 機器（人工呼吸器, VA-ECMO, VV-ECMO, CRRT）を用いた生体機能の代行と最適化。**LV Unloading (左室負荷軽減)**や**右心保護戦略**の観点から設定変更を提案。
-   - **追加任務**: VV-ECMO時の**Recirculation（再循環）**および**O2ER（酸素抽出率）**の監視と対策提案。
 4. **【薬剤師 (Ph)】**: 腎・肝機能に応じた投与設計(TDM)、配合変化確認、抗菌薬適正使用介入。
 5. **【管理栄養士 (RD) / 理学療法士 (PT)】**: 早期経腸栄養の提案、早期離床・リハビリ計画。
 
@@ -110,28 +109,32 @@ KUSANO_BRAIN = """
      - **しかし、右心不全 (Cor Pulmonale) の主因が無気肺・HPVであると判断される場合に限り、** リスクを承知で **「Open Lung Strategy (高PEEP / Recruitment)」** および **「Prone Positioning (腹臥位療法)」** を推奨せよ。物理的にPVRを下げることこそが救命の鍵である。
    - 上記以外での「やってはいけないこと (Do Not)」は明確に警告せよ。
 
-4. **【追加規定】FCCS/ECMOエキスパート判断ロジック (V2.5)**:
-   - **SvO2高値 (>80%) の鑑別 (The 3 Patterns)**:
-     - SvO2 > 80%を「酸素十分」と短絡的に判断せず、pH/Lactateとクロス分析せよ。
-     - **A: Recirculation (再循環)**: VV-ECMO導入直後など。アクション: **「流量を上げろ」等の単純指示は禁止**。CEへカニューレ位置調整指示。
-     - **B: Left Shift (左方移動)**: pH>7.45 or 低体温。アクション: 分時換気量調整、復温。
-     - **C: Tissue Dysoxia (利用障害)**: Recirculationなし+Lac上昇。Sepsis末期/Luxury Perfusion。アクション: 代謝抑制、ミトコンドリア保護。
-   - **輸血戦略**: Hb値だけでなく **「SvO2 < 70%」「O2ER > 30%」「Lactate Clearance停滞」** をトリガーとせよ。
-
-5. **現場のリアリティ**:
+4. **現場のリアリティ**:
    - スマホ閲覧を想定し、結論ファーストで簡潔に。「検討する」ではなく「準備する」「開始する」と断定せよ。
+
+5. **【追加規定】VV-ECMO Flow Dynamics (The 60% Rule & High SvO2)**:
+   - **VV-ECMO管理下における酸素化評価**:
+     - 単にSpO2やSvO2を見るだけでなく、必ず **「ECMO流量 / 自己心拍出量 (CO)」の比率 (Flow Ratio)** を評価せよ。
+   - **パターンA: Ratio < 60% (Capture不良 / High Shunt Fraction)**:
+     - 状況: Sepsis等でCOが過剰 (Hyperdynamic) または ポンプ流量が絶対的に不足。
+     - アクション: **流量増加** を最優先。流量MAXでも足りない場合は、Recirculationに注意しつつ**「βブロッカーや鎮静・解熱によるCO抑制」**を提案し、Shunt率を下げよ。
+   - **パターンB: Ratio > 60% (Capture良好) なのにO2ER高値**:
+     - 状況: 酸素運搬能 (Hb) 不足 または 代謝 (VO2) 過剰。
+     - アクション: **輸血 (Target Hb 10)**、鎮静・シバリング抑制。
+   - **High SvO2 (>80%) 時の鑑別**:
+     - Recirculation (再循環)、Left Shift (pH>7.45/低体温)、Tissue Dysoxia (Lac上昇) の3つを必ず鑑別せよ。
 
 【回答セクション構成】
 
 ---SECTION_PLAN_EMERGENCY---
 **【🚨 最優先・緊急アクション (Do Now)】**
 生命維持のため、今この瞬間に動くべきタスク。主語（医師、看護師、CE、薬剤師）を明確に。
+※Flow Ratioに基づく指示（流量UP vs CO抑制 vs 輸血）もここに含めること。
 
 ---SECTION_AI_OPINION---
 **【🧠 病態推論・クロスオーバー分析】**
 - トレンドデータの乖離から読み取れる隠れた病態。
 - 負の連鎖の特定。
-- **High SvO2時の3パターン鑑別**。
 - **「攻めの治療」の提案（Unloading, RV保護, PIH対策等）**。
 - **⚠️ Do Not（禁忌と、その「戦略的例外」）**。
 
@@ -160,7 +163,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v2.7 (FCCS)")
+    st.caption("STATUS: PROTOTYPE v2.8 (Full)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -188,9 +191,9 @@ with st.sidebar:
         st.error(f"⚠️ SIMULATION MODE: {current_patient_id}")
         if not st.session_state['demo_active']:
             st.session_state['patient_db'][current_patient_id] = [
-                {"Time": "10:00", "P/F": 120, "DO2": 450, "O2ER": 35, "Lactate": 4.5, "Hb": 9.0, "pH": 7.25, "SvO2": 65, "Na": 138, "Cl": 105, "HCO3": 22, "Alb": 3.8},
-                {"Time": "11:00", "P/F": 110, "DO2": 420, "O2ER": 40, "Lactate": 5.2, "Hb": 8.8, "pH": 7.21, "SvO2": 62, "Na": 137, "Cl": 108, "HCO3": 18, "Alb": 3.7},
-                {"Time": "12:00", "P/F": 95,  "DO2": 380, "O2ER": 45, "Lactate": 6.8, "Hb": 8.5, "pH": 7.15, "SvO2": 58, "Na": 135, "Cl": 110, "HCO3": 14, "Alb": 3.5}
+                {"Time": "10:00", "P/F": 120, "DO2": 450, "O2ER": 35, "Lactate": 4.5, "Hb": 9.0, "pH": 7.25, "SvO2": 65, "CO": 8.0, "ECMO_Flow": 3.0, "Na": 138, "Cl": 105, "HCO3": 22, "Alb": 3.8},
+                {"Time": "11:00", "P/F": 110, "DO2": 420, "O2ER": 40, "Lactate": 5.2, "Hb": 8.8, "pH": 7.21, "SvO2": 62, "CO": 9.0, "ECMO_Flow": 3.0, "Na": 137, "Cl": 108, "HCO3": 18, "Alb": 3.7},
+                {"Time": "12:00", "P/F": 95,  "DO2": 380, "O2ER": 45, "Lactate": 6.8, "Hb": 8.5, "pH": 7.15, "SvO2": 58, "CO": 10.0, "ECMO_Flow": 3.0, "Na": 135, "Cl": 110, "HCO3": 14, "Alb": 3.5}
             ]
             st.session_state['demo_active'] = True
     else:
@@ -231,7 +234,7 @@ tab1, tab2 = st.tabs(["📝 CLINICAL DIAGNOSIS", "📈 VITAL TRENDS"])
 with tab2:
     st.markdown("#### 🏥 Bedside Monitor Input")
     
-    # 入力フォーム
+    # 入力フォーム (ECMO Flowを追加)
     c1, c2, c3 = st.columns(3)
     pao2 = c1.number_input("PaO2", step=1.0)
     fio2 = c1.number_input("FiO2 (%)", step=1.0)
@@ -243,6 +246,7 @@ with tab2:
     
     ph = c3.number_input("pH", step=0.01)
     svo2 = c3.number_input("SvO2 (Pre) %", step=1.0, help="VV-ECMO時はRecirculationに注意")
+    ecmo_flow = c3.number_input("ECMO Flow (L/min)", step=0.1, help="VV-ECMO流量")
 
     # 電解質
     e1, e2, e3, e4 = st.columns(4)
@@ -252,8 +256,10 @@ with tab2:
     alb = e4.number_input("Alb", step=0.1)
 
     # 計算ロジック
-    pf, do2, o2er, ag, c_ag = None, None, None, None, None
+    pf, do2, o2er, ag, c_ag, flow_ratio = None, None, None, None, None, None
+    
     if pao2 and fio2 and fio2>0: pf = pao2 / (fio2/100)
+    
     if hb and co and spo2 and pao2:
         cao2 = 1.34*hb*(spo2/100) + 0.0031*pao2
         do2 = co*cao2*10
@@ -261,18 +267,31 @@ with tab2:
             cvo2 = 1.34*hb*(svo2/100) + 0.0031*40
             vo2 = co*(cao2-cvo2)*10
             if do2 and do2>0: o2er = (vo2/do2)*100
+    
     if na and cl and hco3:
         ag = na - (cl + hco3)
         if alb: c_ag = ag + 2.5 * (4.0 - alb)
+    
+    # ECMO Flow Ratio (The 60% Rule)
+    if co and ecmo_flow and co > 0:
+        flow_ratio = (ecmo_flow / co) * 100
 
     # プレビュー
     if pf or do2 or o2er or ag:
         st.markdown("---")
-        cols = st.columns(4)
+        cols = st.columns(5)
         cols[0].metric("P/F", f"{pf:.0f}" if pf else "-")
         cols[1].metric("DO2", f"{do2:.0f}" if do2 else "-")
         cols[2].metric("O2ER", f"{o2er:.1f}%" if o2er else "-")
         cols[3].metric("AG(c)", f"{c_ag:.1f}" if c_ag else (f"{ag:.1f}" if ag else "-"))
+        
+        # Flow Ratio 表示
+        if flow_ratio:
+            ratio_label = "Flow/CO Ratio"
+            ratio_val = f"{flow_ratio:.0f}%"
+            ratio_delta = "Capture OK" if flow_ratio >= 60 else "⚠️ High Shunt"
+            delta_color = "normal" if flow_ratio >= 60 else "inverse"
+            cols[4].metric(ratio_label, ratio_val, ratio_delta, delta_color=delta_color)
 
     if st.button("💾 SAVE DATA"):
         if current_patient_id not in st.session_state['patient_db']: 
@@ -284,7 +303,8 @@ with tab2:
             "Lactate": lac, "Hb": hb, "pH": ph, "SvO2": svo2,
             "AG": c_ag if c_ag else ag,
             "Na": na, "Cl": cl, "HCO3": hco3, "Alb": alb,
-            "CO": co, "SpO2": spo2, "PaO2": pao2, "FiO2": fio2
+            "CO": co, "SpO2": spo2, "PaO2": pao2, "FiO2": fio2,
+            "ECMO_Flow": ecmo_flow, "Flow_Ratio": flow_ratio
         }
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
@@ -297,7 +317,8 @@ with tab2:
         # 入力可能な全項目リスト
         all_possible_cols = [
             "P/F", "DO2", "O2ER", "Lactate", "Hb", "pH", "SvO2", "AG",
-            "Na", "Cl", "HCO3", "Alb", "CO", "SpO2", "PaO2", "FiO2"
+            "Na", "Cl", "HCO3", "Alb", "CO", "SpO2", "PaO2", "FiO2",
+            "ECMO_Flow", "Flow_Ratio"
         ]
         
         # データフレーム内の数値変換
