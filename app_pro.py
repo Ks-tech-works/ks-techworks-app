@@ -421,4 +421,9 @@ with tab1:
                 
                 if "---SECTION" not in raw: st.write(raw)
 
+                # ▼▼▼▼▼▼ ここを追加 (Add This) ▼▼▼▼▼▼
+                st.markdown("---")
+                st.warning("⚠️ **【重要】本システムは診断支援AIです。最終的な医療判断は必ず医師が行ってください。**")
+                # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
             except Exception as e: st.error(f"System Error: {e}")
