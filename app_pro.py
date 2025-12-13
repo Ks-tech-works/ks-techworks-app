@@ -8,14 +8,14 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (Based on V3.1 Dual Trend)
+# 0. アプリ設定 & MERA仕様デザイン (Based on V2.7 High Contrast)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🫀")
 
-# --- CSS: 医療用モニター風のUI/UX（視認性完全維持・変更なし） ---
+# --- CSS: 医療用モニター風のUI/UX（V2.7のデザインを完全維持） ---
 st.markdown(f"""
     <style>
     /* 全体背景：漆黒 */
@@ -177,7 +177,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v3.2 (Neuro-Safe)")
+    st.caption("STATUS: PROTOTYPE v3.3 (Final Polish)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -244,7 +244,7 @@ if is_demo:
 
 tab1, tab2 = st.tabs(["📝 CLINICAL DIAGNOSIS", "📈 VITAL TRENDS"])
 
-# === TAB 2: トレンド管理 (2画面分割グラフ実装) ===
+# === TAB 2: トレンド管理 (2画面分割・タイトル汎用化) ===
 with tab2:
     st.markdown("#### 🏥 Bedside Monitor Input")
     
@@ -325,7 +325,7 @@ with tab2:
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
     
-    # --- グラフ描画 (Dual Panel) ---
+    # --- グラフ描画 (Dual Panel - Generic Titles) ---
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
@@ -345,23 +345,23 @@ with tab2:
         g1, g2 = st.columns(2)
         
         with g1:
-            st.markdown("##### 🫁 Supply / Volume (DO2, VO2, Flow)")
+            st.markdown("##### 📉 Trend Monitor A (Main)")
             default_vol = [c for c in ["DO2", "VO2"] if c in df.columns]
             available_vol = [c for c in all_possible_cols if df[c].notna().any()]
             
             selected_vol = st.multiselect(
-                "Volume Parameters", options=available_vol, default=default_vol, key="vol_sel"
+                "Select Parameters A", options=available_vol, default=default_vol, key="vol_sel"
             )
             if selected_vol:
                 st.line_chart(df.set_index("Time")[selected_vol])
         
         with g2:
-            st.markdown("##### ⚖️ Result / Efficiency (Lac, O2ER, SvO2)")
+            st.markdown("##### 📉 Trend Monitor B (Sub/Correlated)")
             default_res = [c for c in ["Lactate", "O2ER", "SvO2"] if c in df.columns]
             available_res = [c for c in all_possible_cols if df[c].notna().any()]
             
             selected_res = st.multiselect(
-                "Result Parameters", options=available_res, default=default_res, key="res_sel"
+                "Select Parameters B", options=available_res, default=default_res, key="res_sel"
             )
             if selected_res:
                 st.line_chart(df.set_index("Time")[selected_res])
