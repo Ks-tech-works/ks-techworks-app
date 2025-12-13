@@ -8,7 +8,7 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (V4.0 Persistent ICU)
+# 0. アプリ設定 & MERA仕様デザイン (V4.3 Final Stable)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
@@ -72,7 +72,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. KUSANO_BRAIN (Neuro-Safe Logic - 完全維持)
+# 1. KUSANO_BRAIN (最新の脳保護・循環ロジックを維持)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、高度救命救急センターの「統括司令塔（Medical Commander）」としての役割を持つAI「草野」です。
@@ -177,7 +177,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v4.0 (Persistent ICU)")
+    st.caption("STATUS: PROTOTYPE v4.3 (Stable Integration)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -226,11 +226,11 @@ with st.sidebar:
             st.session_state['patient_db'][current_patient_id] = []
             st.rerun()
         
-# ▼▼▼▼▼▼ DATA BACKUP & RESTORE (無限ループ修正版) ▼▼▼▼▼▼
+        # ▼▼▼▼▼▼ DATA BACKUP & RESTORE (完全修正: 無限ループ防止フォーム) ▼▼▼▼▼▼
         with st.expander("💾 DATA BACKUP & RESTORE", expanded=True):
             st.caption("カルテ記載・引き継ぎ用にJSONを保存・復元できます")
             
-            # 1. EXPORT (現在のデータをJSONファイル化してDL)
+            # 1. EXPORT
             current_data = st.session_state['patient_db'].get(current_patient_id, [])
             json_str = json.dumps(current_data, indent=2, ensure_ascii=False)
             
@@ -242,14 +242,14 @@ with st.sidebar:
             )
             
             st.divider()
-            st.caption("👇 過去のデータを復元 (File Upload or Paste)")
+            st.caption("👇 過去のデータを復元 (Select File & Click Restore)")
 
-            # 2. IMPORT A (ファイルアップロード - ボタン式に変更)
-            uploaded_file = st.file_uploader("📂 UPLOAD JSON FILE", type=['json'], key='json_uploader')
-            
-            # ★★★ ここが修正ポイント：ボタンを押した時だけ読み込む ★★★
-            if uploaded_file is not None:
-                if st.button("🔄 EXECUTE FILE RESTORE", type="primary"):
+            # 2. IMPORT (st.formによるループ防止)
+            with st.form("json_restore_form", clear_on_submit=True):
+                uploaded_file = st.file_uploader("📂 UPLOAD JSON FILE", type=['json'])
+                submitted = st.form_submit_button("🔄 EXECUTE FILE RESTORE")
+
+                if submitted and uploaded_file is not None:
                     try:
                         data = json.load(uploaded_file)
                         st.session_state['patient_db'][current_patient_id] = data
@@ -257,22 +257,6 @@ with st.sidebar:
                         st.rerun()
                     except Exception as e:
                         st.error(f"File Error: {e}")
-
-            st.markdown("--- OR ---")
-
-            # 3. IMPORT B (テキストペースト)
-            json_input = st.text_area("Paste JSON Text here:", key="restore_area", height=100)
-            if st.button("🔄 EXECUTE TEXT RESTORE"):
-                try:
-                    if json_input.strip():
-                        data = json.loads(json_input)
-                        st.session_state['patient_db'][current_patient_id] = data
-                        st.success(f"✅ TEXT LOADED: {len(data)} records")
-                        st.rerun()
-                    else:
-                        st.warning("⚠️ JSONエリアが空です")
-                except Exception as e:
-                    st.error(f"Text Error: {e}")
         # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 # ==========================================
@@ -374,7 +358,7 @@ with tab2:
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
     
-    # --- グラフ描画 (Dual Panel - Crash Safe) ---
+    # --- グラフ描画 (Dual Panel - Robust) ---
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
@@ -385,7 +369,7 @@ with tab2:
             "ECMO_Flow", "Flow_Ratio"
         ]
         
-        # 数値変換 & 欠損カラム補完 (エラー回避の要)
+        # 数値変換 & 欠損カラム補完
         for col in all_possible_cols:
             if col not in df.columns: df[col] = None
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -397,7 +381,7 @@ with tab2:
         with g1:
             st.markdown("##### 📉 Trend Monitor A (Main)")
             wanted_vol = ["DO2", "VO2"]
-            # 安全装置: 存在するカラムだけをデフォルトにする
+            # 存在するカラムだけをデフォルト値にする (安全装置)
             available_vol = [c for c in all_possible_cols if df[c].notna().any()] 
             safe_default_vol = list(set(wanted_vol).intersection(available_vol))
             
@@ -410,7 +394,7 @@ with tab2:
         with g2:
             st.markdown("##### 📉 Trend Monitor B (Sub/Correlated)")
             wanted_res = ["Lactate", "O2ER", "SvO2"]
-            # 安全装置: 存在するカラムだけをデフォルトにする
+            # 存在するカラムだけをデフォルト値にする (安全装置)
             available_res = [c for c in all_possible_cols if df[c].notna().any()]
             safe_default_res = list(set(wanted_res).intersection(available_res))
             
