@@ -8,7 +8,7 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (V4.6 Zero-Filter + V2.7 Search)
+# 0. アプリ設定 & MERA仕様デザイン (V4.7 Audit Edition)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
@@ -72,7 +72,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. KUSANO_BRAIN (Neuro-Safe Logic - 完全維持)
+# 1. KUSANO_BRAIN (V4.7 Data Audit Implemented)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、高度救命救急センターの「統括司令塔（Medical Commander）」としての役割を持つAI「草野」です。
@@ -137,19 +137,26 @@ KUSANO_BRAIN = """
      - ECMO送血してもPaO2が上がらない場合、「Mixing (Native CO > ECMO Flow)」に加え、**「HPV(低酸素性肺血管攣縮)の減弱による肺内シャント増加」** を疑え。
      - 肺の病変部（無気肺など）に酸素リッチな混合血が流れることで、本来なら収縮して血流を制限すべき血管が開いてしまい、V/Qミスマッチが悪化している可能性がある。
 
+7. **【追加規定3】Data Audit (データ監査とカルテの信憑性評価)**:
+   - **Trend Dataの欠損を見逃すな**:
+     - 【History】に「順調」「安定」と記述されていても、**【Trend Data】で重要なパラメータ（pH, Lactate, 電解質など）が欠損（測定なし）している場合、その記述を絶対に信用するな。**
+   - **警告の義務**:
+     - 必要なデータが測定されていない場合、「順調」ではなく**「評価不能（データ管理不備）」**と断じ、**「直ちに採血・測定を行え」**と強い警告を発せよ。
+     - 特に**利尿期の電解質（Na, K, Cl）**や、**ショック離脱期の代謝指標（Lac）**の欠損は致命的ミスとして指摘せよ。
+
 【回答セクション構成】
 
 ---SECTION_PLAN_EMERGENCY---
 **【🚨 最優先・緊急アクション (Do Now)】**
 生命維持のため、今この瞬間に動くべきタスク。主語（医師、看護師、CE、薬剤師）を明確に。
-※Flow RatioやΔPaO2に基づく指示（流量調整、Sweep調整、CO抑制）もここに含めること。
+※**データ欠損に対する緊急測定指示**もここに含めること。
 
 ---SECTION_AI_OPINION---
 **【🧠 病態推論・クロスオーバー分析】**
 - トレンドデータの乖離から読み取れる隠れた病態。
-- 負の連鎖の特定。
+- **カルテ記述と実データの矛盾（Data Audit結果）**。
 - **脳保護の観点からのSweep Gas/酸素化評価**。
-- **「攻めの治療」の提案（Unloading, RV保護, PIH対策等）**。
+- **「攻めの治療」の提案**。
 - **⚠️ Do Not（禁忌と、その「戦略的例外」）**。
 
 ---SECTION_PLAN_ROUTINE---
@@ -177,7 +184,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v4.6 (Zero-Filter)")
+    st.caption("STATUS: PROTOTYPE v4.7 (Audit Edition)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -277,7 +284,7 @@ if is_demo:
 
 tab1, tab2 = st.tabs(["📝 CLINICAL DIAGNOSIS", "📈 VITAL TRENDS"])
 
-# === TAB 2: トレンド管理 (Zero-Filter Logic) ===
+# === TAB 2: トレンド管理 (Zero-Filter Logic Implemented) ===
 with tab2:
     st.markdown("#### 🏥 Bedside Monitor Input")
     
@@ -342,7 +349,7 @@ with tab2:
             delta_color = "normal" if flow_ratio >= 60 else "inverse"
             st.metric(ratio_label, ratio_val, ratio_delta, delta_color=delta_color)
 
-    # ▼▼▼▼▼▼ 修正: 入力なし(0)の場合は None として保存するロジック (Zero-Filter) ▼▼▼▼▼▼
+    # ▼▼▼▼▼▼ ZERO-FILTER LOGIC (V4.6 Logic) ▼▼▼▼▼▼
     if st.button("💾 SAVE DATA (Add to Session)"):
         if current_patient_id not in st.session_state['patient_db']: 
             st.session_state['patient_db'][current_patient_id] = []
@@ -357,7 +364,7 @@ with tab2:
             "Lactate": lac if lac and lac > 0 else None,
             "Hb": hb if hb and hb > 0 else None,
             "pH": ph if ph and ph > 0 else None,
-            "SvO2": svo2 if svo2 and svo2 > 0 else None, # ここが重要！
+            "SvO2": svo2 if svo2 and svo2 > 0 else None,
             "AG": c_ag if c_ag else ag if ag else None,
             "Na": na if na and na > 0 else None,
             "Cl": cl if cl and cl > 0 else None,
@@ -433,18 +440,18 @@ with tab1:
             hist = st.session_state['patient_db'].get(current_patient_id, [])
             if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
             
-            # 1. Search (V2.7仕様に完全回帰 + Promise Kept)
+            # 1. Search (V2.7 Logic - PROMISE KEPT)
             search_context = ""
             try:
                 model_kw = genai.GenerativeModel(model_name=selected_model_name)
-                # 👇 V2.7のオリジナル記述（絶対に変えない）
+                # 👇 V2.7 Original Logic
                 kw_prompt = f"Extract 3 medical keywords (space separated) for ICU patient search:\n{hist_text[:200]}\n{lab_text[:200]}"
                 kw_res = model_kw.generate_content(kw_prompt)
                 search_key = kw_res.text.strip()
                 
                 with st.spinner(f"🌐 Searching Evidence: {search_key}..."):
                     with DDGS() as ddgs:
-                        # 👇 V2.7のオリジナル記述（絶対に変えない）
+                        # 👇 V2.7 Original Logic
                         results = list(ddgs.text(f"{search_key} guideline intensive care", region='jp-jp', max_results=3))
                         for r in results: search_context += f"Title: {r['title']}\nURL: {r['href']}\nBody: {r['body']}\n\n"
             except Exception as e: search_context = f"Search Error: {e}"
