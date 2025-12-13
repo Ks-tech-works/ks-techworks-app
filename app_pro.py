@@ -177,7 +177,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v3.3 (Final Polish)")
+    st.caption("STATUS: PROTOTYPE v3.5 (Full)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -225,6 +225,19 @@ with st.sidebar:
         if st.button("🗑️ CLEAR HISTORY", key="del_btn"):
             st.session_state['patient_db'][current_patient_id] = []
             st.rerun()
+        
+        # ▼▼▼▼▼▼ JSON LOADER (復活) ▼▼▼▼▼▼
+        with st.expander("📥 JSON DATA LOADER"):
+            json_input = st.text_area("Paste JSON here to restore data:")
+            if st.button("🔄 LOAD JSON"):
+                try:
+                    data = json.loads(json_input)
+                    st.session_state['patient_db'][current_patient_id] = data
+                    st.success(f"✅ Data Loaded ({len(data)} records)")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"JSON Error: {e}")
+        # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 # ==========================================
 # 4. メイン画面
