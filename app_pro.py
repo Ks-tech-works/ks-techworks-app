@@ -8,14 +8,14 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (Based on V2.7 High Contrast)
+# 0. アプリ設定 & MERA仕様デザイン (Based on V3.1 Dual Trend)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🫀")
 
-# --- CSS: 医療用モニター風のUI/UX（V2.7のデザインを完全維持） ---
+# --- CSS: 医療用モニター風のUI/UX（視認性完全維持・変更なし） ---
 st.markdown(f"""
     <style>
     /* 全体背景：漆黒 */
@@ -72,7 +72,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. KUSANO_BRAIN (Original Base + Section 5 Added)
+# 1. KUSANO_BRAIN (Neuro-Protective Strategy Integrated)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、高度救命救急センターの「統括司令塔（Medical Commander）」としての役割を持つAI「草野」です。
@@ -112,7 +112,7 @@ KUSANO_BRAIN = """
 4. **現場のリアリティ**:
    - スマホ閲覧を想定し、結論ファーストで簡潔に。「検討する」ではなく「準備する」「開始する」と断定せよ。
 
-5. **【追加規定】VV-ECMO Flow Dynamics (The 60% Rule & High SvO2)**:
+5. **【追加規定1】VV-ECMO Flow Dynamics (The 60% Rule & High SvO2)**:
    - **VV-ECMO管理下における酸素化評価**:
      - 単にSpO2やSvO2を見るだけでなく、必ず **「ECMO流量 / 自己心拍出量 (CO)」の比率 (Flow Ratio)** を評価せよ。
    - **パターンA: Ratio < 60% (Capture不良 / High Shunt Fraction)**:
@@ -124,17 +124,31 @@ KUSANO_BRAIN = """
    - **High SvO2 (>80%) 時の鑑別**:
      - Recirculation (再循環)、Left Shift (pH>7.45/低体温)、Tissue Dysoxia (Lac上昇) の3つを必ず鑑別せよ。
 
+6. **【追加規定2】Neuro-Protective ECMO Strategy (脳保護戦略)**:
+   - **導入初期のSweep Gas管理 (最重要)**:
+     - 高CO2血症(Hypercapnia)からの導入時、**急激なPaCO2低下(>50% drop)** は脳血管収縮・rSO2低下を招き、脳梗塞・脳浮腫などの神経学的予後を悪化させる (ELSO Registry)。
+     - **禁止事項**: 導入直後に「Blood Flow : Sweep Gas = 1 : 1」にするな。
+     - **指示**: Sweep Gasは低流量から開始し、数時間〜24時間かけて緩徐にPaCO2を補正せよ (Slow Titration)。
+   - **酸素化の「適正な改善幅」**:
+     - PaO2は高ければ良いわけではない。導入24時間後の **ΔPaO2 (変化量)** が **+20〜80 mmHg** の範囲が安全域である。
+     - **ΔPaO2 > 80 mmHg (過剰)**: 脳梗塞リスク増。FiO2を下げよ。
+     - **ΔPaO2 < 20 mmHg (過小)**: 脳出血リスク増。原因精査へ。
+   - **Refractory Hypoxemia (低酸素の真因)**:
+     - ECMO送血してもPaO2が上がらない場合、「Mixing (Native CO > ECMO Flow)」に加え、**「HPV(低酸素性肺血管攣縮)の減弱による肺内シャント増加」** を疑え。
+     - 肺の病変部（無気肺など）に酸素リッチな混合血が流れることで、本来なら収縮して血流を制限すべき血管が開いてしまい、V/Qミスマッチが悪化している可能性がある。
+
 【回答セクション構成】
 
 ---SECTION_PLAN_EMERGENCY---
 **【🚨 最優先・緊急アクション (Do Now)】**
 生命維持のため、今この瞬間に動くべきタスク。主語（医師、看護師、CE、薬剤師）を明確に。
-※Flow Ratioに基づく指示（流量UP vs CO抑制 vs 輸血）もここに含めること。
+※Flow RatioやΔPaO2に基づく指示（流量調整、Sweep調整、CO抑制）もここに含めること。
 
 ---SECTION_AI_OPINION---
 **【🧠 病態推論・クロスオーバー分析】**
 - トレンドデータの乖離から読み取れる隠れた病態。
 - 負の連鎖の特定。
+- **脳保護の観点からのSweep Gas/酸素化評価**。
 - **「攻めの治療」の提案（Unloading, RV保護, PIH対策等）**。
 - **⚠️ Do Not（禁忌と、その「戦略的例外」）**。
 
@@ -163,7 +177,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v2.8 (Strict Fix)")
+    st.caption("STATUS: PROTOTYPE v3.2 (Neuro-Safe)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -191,9 +205,9 @@ with st.sidebar:
         st.error(f"⚠️ SIMULATION MODE: {current_patient_id}")
         if not st.session_state['demo_active']:
             st.session_state['patient_db'][current_patient_id] = [
-                {"Time": "10:00", "P/F": 120, "DO2": 450, "O2ER": 35, "Lactate": 4.5, "Hb": 9.0, "pH": 7.25, "SvO2": 65, "CO": 8.0, "ECMO_Flow": 3.0, "Na": 138, "Cl": 105, "HCO3": 22, "Alb": 3.8},
-                {"Time": "11:00", "P/F": 110, "DO2": 420, "O2ER": 40, "Lactate": 5.2, "Hb": 8.8, "pH": 7.21, "SvO2": 62, "CO": 9.0, "ECMO_Flow": 3.0, "Na": 137, "Cl": 108, "HCO3": 18, "Alb": 3.7},
-                {"Time": "12:00", "P/F": 95,  "DO2": 380, "O2ER": 45, "Lactate": 6.8, "Hb": 8.5, "pH": 7.15, "SvO2": 58, "CO": 10.0, "ECMO_Flow": 3.0, "Na": 135, "Cl": 110, "HCO3": 14, "Alb": 3.5}
+                {"Time": "10:00", "P/F": 120, "DO2": 450, "VO2": 150, "O2ER": 33, "Lactate": 4.5, "Hb": 9.0, "pH": 7.25, "SvO2": 65, "CO": 8.0, "ECMO_Flow": 3.0, "Na": 138, "Cl": 105, "HCO3": 22, "Alb": 3.8},
+                {"Time": "11:00", "P/F": 110, "DO2": 420, "VO2": 160, "O2ER": 38, "Lactate": 5.2, "Hb": 8.8, "pH": 7.21, "SvO2": 62, "CO": 9.0, "ECMO_Flow": 3.0, "Na": 137, "Cl": 108, "HCO3": 18, "Alb": 3.7},
+                {"Time": "12:00", "P/F": 95,  "DO2": 380, "VO2": 170, "O2ER": 45, "Lactate": 6.8, "Hb": 8.5, "pH": 7.15, "SvO2": 58, "CO": 10.0, "ECMO_Flow": 3.0, "Na": 135, "Cl": 110, "HCO3": 14, "Alb": 3.5}
             ]
             st.session_state['demo_active'] = True
     else:
@@ -230,11 +244,11 @@ if is_demo:
 
 tab1, tab2 = st.tabs(["📝 CLINICAL DIAGNOSIS", "📈 VITAL TRENDS"])
 
-# === TAB 2: トレンド管理 (計算ロジック修正済み) ===
+# === TAB 2: トレンド管理 (2画面分割グラフ実装) ===
 with tab2:
     st.markdown("#### 🏥 Bedside Monitor Input")
     
-    # 入力フォーム (ECMO Flowを追加)
+    # 入力フォーム
     c1, c2, c3 = st.columns(3)
     pao2 = c1.number_input("PaO2", step=1.0)
     fio2 = c1.number_input("FiO2 (%)", step=1.0)
@@ -255,8 +269,8 @@ with tab2:
     hco3 = e3.number_input("HCO3", step=0.1)
     alb = e4.number_input("Alb", step=0.1)
 
-    # 計算ロジック (インデント修正済み)
-    pf, do2, o2er, ag, c_ag, flow_ratio = None, None, None, None, None, None
+    # 計算ロジック
+    pf, do2, vo2, o2er, ag, c_ag, flow_ratio = None, None, None, None, None, None, None
     
     if pao2 and fio2 and fio2>0:
         pf = pao2 / (fio2/100)
@@ -275,7 +289,6 @@ with tab2:
         if alb:
             c_ag = ag + 2.5 * (4.0 - alb)
     
-    # ECMO Flow Ratio (The 60% Rule)
     if co and ecmo_flow and co > 0:
         flow_ratio = (ecmo_flow / co) * 100
 
@@ -285,16 +298,16 @@ with tab2:
         cols = st.columns(5)
         cols[0].metric("P/F", f"{pf:.0f}" if pf else "-")
         cols[1].metric("DO2", f"{do2:.0f}" if do2 else "-")
-        cols[2].metric("O2ER", f"{o2er:.1f}%" if o2er else "-")
-        cols[3].metric("AG(c)", f"{c_ag:.1f}" if c_ag else (f"{ag:.1f}" if ag else "-"))
+        cols[2].metric("VO2", f"{vo2:.0f}" if vo2 else "-")
+        cols[3].metric("O2ER", f"{o2er:.1f}%" if o2er else "-")
+        cols[4].metric("AG(c)", f"{c_ag:.1f}" if c_ag else (f"{ag:.1f}" if ag else "-"))
         
-        # Flow Ratio 表示
         if flow_ratio:
             ratio_label = "Flow/CO Ratio"
             ratio_val = f"{flow_ratio:.0f}%"
             ratio_delta = "Capture OK" if flow_ratio >= 60 else "⚠️ High Shunt"
             delta_color = "normal" if flow_ratio >= 60 else "inverse"
-            cols[4].metric(ratio_label, ratio_val, ratio_delta, delta_color=delta_color)
+            st.metric(ratio_label, ratio_val, ratio_delta, delta_color=delta_color)
 
     if st.button("💾 SAVE DATA"):
         if current_patient_id not in st.session_state['patient_db']: 
@@ -302,7 +315,7 @@ with tab2:
         
         record = {
             "Time": datetime.now().strftime("%H:%M:%S"),
-            "P/F": pf, "DO2": do2, "O2ER": o2er, 
+            "P/F": pf, "DO2": do2, "VO2": vo2, "O2ER": o2er,
             "Lactate": lac, "Hb": hb, "pH": ph, "SvO2": svo2,
             "AG": c_ag if c_ag else ag,
             "Na": na, "Cl": cl, "HCO3": hco3, "Alb": alb,
@@ -312,42 +325,46 @@ with tab2:
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
     
-    # --- グラフ描画 (全項目選択可能版) ---
+    # --- グラフ描画 (Dual Panel) ---
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
         
-        # 入力可能な全項目リスト
         all_possible_cols = [
-            "P/F", "DO2", "O2ER", "Lactate", "Hb", "pH", "SvO2", "AG",
+            "P/F", "DO2", "VO2", "O2ER", "Lactate", "Hb", "pH", "SvO2", "AG",
             "Na", "Cl", "HCO3", "Alb", "CO", "SpO2", "PaO2", "FiO2",
             "ECMO_Flow", "Flow_Ratio"
         ]
         
-        # データフレーム内の数値変換
         for col in all_possible_cols:
             if col not in df.columns: df[col] = None
             df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        st.markdown("### 📉 CUSTOM TREND ANALYSIS")
+        st.markdown("### 📉 DUAL TREND ANALYSIS")
         
-        # データが存在するカラムのみを選択肢として表示
-        available_options = [c for c in all_possible_cols if df[c].notna().any()]
+        g1, g2 = st.columns(2)
         
-        # デフォルト選択 (草野スペシャル)
-        default_cols = [c for c in ["SvO2", "Lactate", "O2ER"] if c in available_options]
+        with g1:
+            st.markdown("##### 🫁 Supply / Volume (DO2, VO2, Flow)")
+            default_vol = [c for c in ["DO2", "VO2"] if c in df.columns]
+            available_vol = [c for c in all_possible_cols if df[c].notna().any()]
+            
+            selected_vol = st.multiselect(
+                "Volume Parameters", options=available_vol, default=default_vol, key="vol_sel"
+            )
+            if selected_vol:
+                st.line_chart(df.set_index("Time")[selected_vol])
         
-        selected_cols = st.multiselect(
-            "👇 表示したい項目を選択 (Select Parameters)",
-            options=available_options,
-            default=default_cols
-        )
-        
-        if selected_cols:
-            st.line_chart(df.set_index("Time")[selected_cols])
-            st.caption(f"Displaying: {', '.join(selected_cols)}")
-        else:
-            st.info("上のボックスから表示したい項目を選んでください。")
+        with g2:
+            st.markdown("##### ⚖️ Result / Efficiency (Lac, O2ER, SvO2)")
+            default_res = [c for c in ["Lactate", "O2ER", "SvO2"] if c in df.columns]
+            available_res = [c for c in all_possible_cols if df[c].notna().any()]
+            
+            selected_res = st.multiselect(
+                "Result Parameters", options=available_res, default=default_res, key="res_sel"
+            )
+            if selected_res:
+                st.line_chart(df.set_index("Time")[selected_res])
 
 # === TAB 1: 総合診断 ===
 with tab1:
@@ -421,7 +438,7 @@ with tab1:
                 
                 if "---SECTION" not in raw: st.write(raw)
 
-                # ▼▼▼▼▼▼ ここを追加 (Add This) ▼▼▼▼▼▼
+                # ▼▼▼▼▼▼ 安全装置（Disclaimer） ▼▼▼▼▼▼
                 st.markdown("---")
                 st.warning("⚠️ **【重要】本システムは診断支援AIです。最終的な医療判断は必ず医師が行ってください。**")
                 # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
