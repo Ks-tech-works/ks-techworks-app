@@ -8,7 +8,7 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (V4.1 File Restore)
+# 0. アプリ設定 & MERA仕様デザイン (V4.0 Persistent ICU)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
@@ -177,7 +177,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v4.1 (File Restore)")
+    st.caption("STATUS: PROTOTYPE v4.0 (Persistent ICU)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -226,7 +226,7 @@ with st.sidebar:
             st.session_state['patient_db'][current_patient_id] = []
             st.rerun()
         
-        # ▼▼▼▼▼▼ DATA BACKUP & RESTORE (ファイル復元対応) ▼▼▼▼▼▼
+# ▼▼▼▼▼▼ DATA BACKUP & RESTORE (無限ループ修正版) ▼▼▼▼▼▼
         with st.expander("💾 DATA BACKUP & RESTORE", expanded=True):
             st.caption("カルテ記載・引き継ぎ用にJSONを保存・復元できます")
             
@@ -244,22 +244,25 @@ with st.sidebar:
             st.divider()
             st.caption("👇 過去のデータを復元 (File Upload or Paste)")
 
-            # 2. IMPORT A (ファイルアップロード - 本命)
+            # 2. IMPORT A (ファイルアップロード - ボタン式に変更)
             uploaded_file = st.file_uploader("📂 UPLOAD JSON FILE", type=['json'], key='json_uploader')
+            
+            # ★★★ ここが修正ポイント：ボタンを押した時だけ読み込む ★★★
             if uploaded_file is not None:
-                try:
-                    data = json.load(uploaded_file)
-                    st.session_state['patient_db'][current_patient_id] = data
-                    st.success(f"✅ FILE LOADED: {len(data)} records")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"File Error: {e}")
+                if st.button("🔄 EXECUTE FILE RESTORE", type="primary"):
+                    try:
+                        data = json.load(uploaded_file)
+                        st.session_state['patient_db'][current_patient_id] = data
+                        st.success(f"✅ FILE LOADED: {len(data)} records")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"File Error: {e}")
 
             st.markdown("--- OR ---")
 
-            # 3. IMPORT B (テキストペースト - 病院端末の逃げ道)
+            # 3. IMPORT B (テキストペースト)
             json_input = st.text_area("Paste JSON Text here:", key="restore_area", height=100)
-            if st.button("🔄 LOAD TEXT"):
+            if st.button("🔄 EXECUTE TEXT RESTORE"):
                 try:
                     if json_input.strip():
                         data = json.loads(json_input)
@@ -371,7 +374,7 @@ with tab2:
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
     
-    # --- グラフ描画 (Dual Panel - Robust) ---
+    # --- グラフ描画 (Dual Panel - Crash Safe) ---
     hist = st.session_state['patient_db'].get(current_patient_id, [])
     if hist:
         df = pd.DataFrame(hist)
@@ -382,7 +385,7 @@ with tab2:
             "ECMO_Flow", "Flow_Ratio"
         ]
         
-        # 数値変換 & 欠損カラム補完
+        # 数値変換 & 欠損カラム補完 (エラー回避の要)
         for col in all_possible_cols:
             if col not in df.columns: df[col] = None
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -394,7 +397,7 @@ with tab2:
         with g1:
             st.markdown("##### 📉 Trend Monitor A (Main)")
             wanted_vol = ["DO2", "VO2"]
-            # 存在するカラムだけをデフォルト値にする (安全装置)
+            # 安全装置: 存在するカラムだけをデフォルトにする
             available_vol = [c for c in all_possible_cols if df[c].notna().any()] 
             safe_default_vol = list(set(wanted_vol).intersection(available_vol))
             
@@ -407,7 +410,7 @@ with tab2:
         with g2:
             st.markdown("##### 📉 Trend Monitor B (Sub/Correlated)")
             wanted_res = ["Lactate", "O2ER", "SvO2"]
-            # 存在するカラムだけをデフォルト値にする (安全装置)
+            # 安全装置: 存在するカラムだけをデフォルトにする
             available_res = [c for c in all_possible_cols if df[c].notna().any()]
             safe_default_res = list(set(wanted_res).intersection(available_res))
             
