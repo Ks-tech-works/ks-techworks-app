@@ -8,14 +8,14 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (V4.5 Strict Revert)
+# 0. アプリ設定 & MERA仕様デザイン (V4.6 Zero-Filter + V2.7 Search)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🫀")
 
-# --- CSS: 医療用モニター風のUI/UX（変更なし） ---
+# --- CSS: 医療用モニター風のUI/UX ---
 st.markdown(f"""
     <style>
     /* 全体背景：漆黒 */
@@ -72,7 +72,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. KUSANO_BRAIN (V4.2の脳保護ロジックを維持)
+# 1. KUSANO_BRAIN (Neuro-Safe Logic - 完全維持)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、高度救命救急センターの「統括司令塔（Medical Commander）」としての役割を持つAI「草野」です。
@@ -177,7 +177,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v4.5 (Strict Revert)")
+    st.caption("STATUS: PROTOTYPE v4.6 (Zero-Filter)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -226,7 +226,7 @@ with st.sidebar:
             st.session_state['patient_db'][current_patient_id] = []
             st.rerun()
         
-        # ▼▼▼▼▼▼ DATA BACKUP & RESTORE (無限ループ防止版) ▼▼▼▼▼▼
+        # ▼▼▼▼▼▼ DATA BACKUP & RESTORE (無限ループ防止 + V2.7検索対応) ▼▼▼▼▼▼
         with st.expander("💾 DATA BACKUP & RESTORE", expanded=True):
             st.caption("カルテ記載・引き継ぎ用にJSONを保存・復元できます")
             
@@ -277,7 +277,7 @@ if is_demo:
 
 tab1, tab2 = st.tabs(["📝 CLINICAL DIAGNOSIS", "📈 VITAL TRENDS"])
 
-# === TAB 2: トレンド管理 (Robust Crash Guard) ===
+# === TAB 2: トレンド管理 (Zero-Filter Logic) ===
 with tab2:
     st.markdown("#### 🏥 Bedside Monitor Input")
     
@@ -342,18 +342,33 @@ with tab2:
             delta_color = "normal" if flow_ratio >= 60 else "inverse"
             st.metric(ratio_label, ratio_val, ratio_delta, delta_color=delta_color)
 
+    # ▼▼▼▼▼▼ 修正: 入力なし(0)の場合は None として保存するロジック (Zero-Filter) ▼▼▼▼▼▼
     if st.button("💾 SAVE DATA (Add to Session)"):
         if current_patient_id not in st.session_state['patient_db']: 
             st.session_state['patient_db'][current_patient_id] = []
         
+        # 0 より大きい場合のみ値を保存、そうでなければ None
         record = {
             "Time": datetime.now().strftime("%H:%M:%S"),
-            "P/F": pf, "DO2": do2, "VO2": vo2, "O2ER": o2er,
-            "Lactate": lac, "Hb": hb, "pH": ph, "SvO2": svo2,
-            "AG": c_ag if c_ag else ag,
-            "Na": na, "Cl": cl, "HCO3": hco3, "Alb": alb,
-            "CO": co, "SpO2": spo2, "PaO2": pao2, "FiO2": fio2,
-            "ECMO_Flow": ecmo_flow, "Flow_Ratio": flow_ratio
+            "P/F": pf if pf else None,
+            "DO2": do2 if do2 else None,
+            "VO2": vo2 if vo2 else None,
+            "O2ER": o2er if o2er else None,
+            "Lactate": lac if lac and lac > 0 else None,
+            "Hb": hb if hb and hb > 0 else None,
+            "pH": ph if ph and ph > 0 else None,
+            "SvO2": svo2 if svo2 and svo2 > 0 else None, # ここが重要！
+            "AG": c_ag if c_ag else ag if ag else None,
+            "Na": na if na and na > 0 else None,
+            "Cl": cl if cl and cl > 0 else None,
+            "HCO3": hco3 if hco3 and hco3 > 0 else None,
+            "Alb": alb if alb and alb > 0 else None,
+            "CO": co if co and co > 0 else None,
+            "SpO2": spo2 if spo2 and spo2 > 0 else None,
+            "PaO2": pao2 if pao2 and pao2 > 0 else None,
+            "FiO2": fio2 if fio2 and fio2 > 0 else None,
+            "ECMO_Flow": ecmo_flow if ecmo_flow and ecmo_flow > 0 else None,
+            "Flow_Ratio": flow_ratio if flow_ratio else None
         }
         st.session_state['patient_db'][current_patient_id].append(record)
         st.rerun()
@@ -418,18 +433,18 @@ with tab1:
             hist = st.session_state['patient_db'].get(current_patient_id, [])
             if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
             
-            # 1. Search (★ここをV2.7と完全に一致させました★)
+            # 1. Search (V2.7仕様に完全回帰 + Promise Kept)
             search_context = ""
             try:
                 model_kw = genai.GenerativeModel(model_name=selected_model_name)
-                # 👇 V2.7のオリジナル記述
+                # 👇 V2.7のオリジナル記述（絶対に変えない）
                 kw_prompt = f"Extract 3 medical keywords (space separated) for ICU patient search:\n{hist_text[:200]}\n{lab_text[:200]}"
                 kw_res = model_kw.generate_content(kw_prompt)
                 search_key = kw_res.text.strip()
                 
                 with st.spinner(f"🌐 Searching Evidence: {search_key}..."):
                     with DDGS() as ddgs:
-                        # 👇 V2.7のオリジナル記述
+                        # 👇 V2.7のオリジナル記述（絶対に変えない）
                         results = list(ddgs.text(f"{search_key} guideline intensive care", region='jp-jp', max_results=3))
                         for r in results: search_context += f"Title: {r['title']}\nURL: {r['href']}\nBody: {r['body']}\n\n"
             except Exception as e: search_context = f"Search Error: {e}"
