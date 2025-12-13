@@ -8,14 +8,14 @@ from datetime import datetime
 from duckduckgo_search import DDGS
 
 # ==========================================
-# 0. アプリ設定 & MERA仕様デザイン (V4.3 Final Stable)
+# 0. アプリ設定 & MERA仕様デザイン (V4.5 Strict Revert)
 # ==========================================
 COMPANY_NAME = "K's tech works. (K&G solution)"
 APP_TITLE = "Super Clinical Decision Support [PRO]"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="🫀")
 
-# --- CSS: 医療用モニター風のUI/UX（視認性完全維持） ---
+# --- CSS: 医療用モニター風のUI/UX（変更なし） ---
 st.markdown(f"""
     <style>
     /* 全体背景：漆黒 */
@@ -72,7 +72,7 @@ st.markdown(f"""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. KUSANO_BRAIN (最新の脳保護・循環ロジックを維持)
+# 1. KUSANO_BRAIN (V4.2の脳保護ロジックを維持)
 # ==========================================
 KUSANO_BRAIN = """
 あなたは、高度救命救急センターの「統括司令塔（Medical Commander）」としての役割を持つAI「草野」です。
@@ -177,7 +177,7 @@ selected_model_name = None
 # ==========================================
 with st.sidebar:
     st.title("⚙️ SYSTEM CONFIG")
-    st.caption("STATUS: PROTOTYPE v4.3 (Stable Integration)")
+    st.caption("STATUS: PROTOTYPE v4.5 (Strict Revert)")
 
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -226,7 +226,7 @@ with st.sidebar:
             st.session_state['patient_db'][current_patient_id] = []
             st.rerun()
         
-        # ▼▼▼▼▼▼ DATA BACKUP & RESTORE (完全修正: 無限ループ防止フォーム) ▼▼▼▼▼▼
+        # ▼▼▼▼▼▼ DATA BACKUP & RESTORE (無限ループ防止版) ▼▼▼▼▼▼
         with st.expander("💾 DATA BACKUP & RESTORE", expanded=True):
             st.caption("カルテ記載・引き継ぎ用にJSONを保存・復元できます")
             
@@ -381,7 +381,6 @@ with tab2:
         with g1:
             st.markdown("##### 📉 Trend Monitor A (Main)")
             wanted_vol = ["DO2", "VO2"]
-            # 存在するカラムだけをデフォルト値にする (安全装置)
             available_vol = [c for c in all_possible_cols if df[c].notna().any()] 
             safe_default_vol = list(set(wanted_vol).intersection(available_vol))
             
@@ -394,7 +393,6 @@ with tab2:
         with g2:
             st.markdown("##### 📉 Trend Monitor B (Sub/Correlated)")
             wanted_res = ["Lactate", "O2ER", "SvO2"]
-            # 存在するカラムだけをデフォルト値にする (安全装置)
             available_res = [c for c in all_possible_cols if df[c].notna().any()]
             safe_default_res = list(set(wanted_res).intersection(available_res))
             
@@ -420,16 +418,18 @@ with tab1:
             hist = st.session_state['patient_db'].get(current_patient_id, [])
             if hist: trend_str = pd.DataFrame(hist).tail(5).to_markdown(index=False)
             
-            # 1. Search
+            # 1. Search (★ここをV2.7と完全に一致させました★)
             search_context = ""
             try:
                 model_kw = genai.GenerativeModel(model_name=selected_model_name)
+                # 👇 V2.7のオリジナル記述
                 kw_prompt = f"Extract 3 medical keywords (space separated) for ICU patient search:\n{hist_text[:200]}\n{lab_text[:200]}"
                 kw_res = model_kw.generate_content(kw_prompt)
                 search_key = kw_res.text.strip()
                 
                 with st.spinner(f"🌐 Searching Evidence: {search_key}..."):
                     with DDGS() as ddgs:
+                        # 👇 V2.7のオリジナル記述
                         results = list(ddgs.text(f"{search_key} guideline intensive care", region='jp-jp', max_results=3))
                         for r in results: search_context += f"Title: {r['title']}\nURL: {r['href']}\nBody: {r['body']}\n\n"
             except Exception as e: search_context = f"Search Error: {e}"
