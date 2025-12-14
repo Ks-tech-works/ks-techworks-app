@@ -3,4 +3,5 @@ google-generativeai
 pandas
 duckduckgo-search>=6.1.5
 tabulate
+Pillow
 watchdog
